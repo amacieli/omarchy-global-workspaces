@@ -1,0 +1,114 @@
+#!/bin/bash
+# omarchy:summary=Switch all monitors to the same workspace slot (global mode)
+# omarchy:args=<slot-number>
+#
+# In global workspace mode each monitor owns a dedicated workspace range:
+#   monitor id 0  →  workspaces  1-10
+#   monitor id 1  →  workspaces 11-20
+#   monitor id 2  →  workspaces 21-30
+#   …and so on (offset = monitor_id * 10)
+#
+# Pressing SUPER+N in global mode calls this script with N=1..10.
+# The script dispatches workspace (offset + N) on every connected monitor.
+#
+# ROOT CAUSE OF WORKSPACE THEFT:
+#   Hyprland tracks "workspace W lives on monitor M". When you dispatch
+#   focus({ workspace = 'W' }), Hyprland may steal focus to whichever monitor
+#   currently owns W, rather than switching the monitor you targeted. This is
+#   especially common after window moves, restarts, or when windows were open
+#   before global mode was first activated.
+#
+#   FIX: Before focusing workspace W on monitor M, we explicitly reassign W to
+#   M via workspace.move({ workspace = 'W', monitor = 'M' }). This is the Lua
+#   equivalent of "moveworkspacetomonitor". After that, the focus dispatch goes
+#   to the right monitor every time.
+#
+# Fullscreen=2 workaround:
+#   Hyprland silently ignores workspace-focus dispatches on a monitor that has
+#   a fullscreen=2 window. We detect by address, stash to workspace 999 (no
+#   focus change, address-targeted), switch the workspace, then restore.
+#
+# Processing order: highest-offset monitors first, originally-focused last.
+
+TARGET="${1:-}"
+if [[ -z "$TARGET" || ! "$TARGET" =~ ^([1-9]|10)$ ]]; then
+  echo "Usage: $0 <slot 1-10>" >&2
+  exit 1
+fi
+
+# Snapshot monitor list once (stable for the duration of the switch)
+monitors_json=$(hyprctl monitors -j)
+
+# Build ordered list: non-focused highest-id first, focused monitor last.
+readarray -t non_focused < <(
+  echo "$monitors_json" \
+    | jq -r 'sort_by(.id) | reverse | .[] | select(.focused | not) | "\(.id) \(.name)"'
+)
+readarray -t focused_entry < <(
+  echo "$monitors_json" \
+    | jq -r '.[] | select(.focused) | "\(.id) \(.name)"'
+)
+
+switch_monitor() {
+  local mon_id="$1"
+  local mon_name="$2"
+  local ws=$(( mon_id * 10 + TARGET ))
+
+  # Re-query clients fresh for this monitor so we see any changes from earlier
+  # iterations (windows stashed to 999, prior workspace assignments, etc.).
+  local clients_now
+  clients_now=$(hyprctl clients -j 2>/dev/null) || clients_now="[]"
+
+  # Detect a fullscreen=2 window on this monitor (by address).
+  local fs_addr orig_ws
+  fs_addr=$(echo "$clients_now" | jq -r \
+    --argjson mid "$mon_id" \
+    '.[] | select(.monitor == $mid and .fullscreen == 2) | .address' \
+    2>/dev/null | head -1) || fs_addr=""
+
+  if [[ -n "$fs_addr" ]]; then
+    orig_ws=$(echo "$clients_now" | jq -r \
+      --arg addr "$fs_addr" \
+      '.[] | select(.address == $addr) | .workspace.id' \
+      2>/dev/null) || orig_ws=""
+  fi
+
+  # Stash fullscreen window to ws 999 by address (no focus change).
+  if [[ -n "$fs_addr" && -n "$orig_ws" ]]; then
+    hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '999', window = 'address:$fs_addr', follow = false }))" \
+      >/dev/null 2>&1 || true
+  fi
+
+  # Reassign the target workspace to this monitor BEFORE focusing it.
+  # This prevents Hyprland from stealing focus to whichever monitor currently
+  # owns that workspace, which is the primary cause of "wrong monitor switches".
+  hyprctl eval "hl.dispatch(hl.dsp.workspace.move({ workspace = '$ws', monitor = '$mon_name' }))" \
+    >/dev/null 2>&1 || true
+
+  # Now focus this monitor, then switch it to the target workspace.
+  hyprctl eval "hl.dispatch(hl.dsp.focus({ monitor = '$mon_name' }))" \
+    >/dev/null 2>&1 || true
+  hyprctl eval "hl.dispatch(hl.dsp.focus({ workspace = '$ws' }))" \
+    >/dev/null 2>&1 || true
+
+  # Restore fullscreen window to its original workspace by address.
+  if [[ -n "$fs_addr" && -n "$orig_ws" ]]; then
+    hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '$orig_ws', window = 'address:$fs_addr', follow = false }))" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+# Switch non-focused monitors first (highest id first)
+for entry in "${non_focused[@]:-}"; do
+  [[ -z "$entry" ]] && continue
+  mon_id=$(echo "$entry" | cut -d' ' -f1)
+  mon_name=$(echo "$entry" | cut -d' ' -f2)
+  switch_monitor "$mon_id" "$mon_name" || true
+done
+
+# Switch the originally-focused monitor last (leaves focus there)
+if [[ -n "${focused_entry[0]:-}" ]]; then
+  mon_id=$(echo "${focused_entry[0]}" | cut -d' ' -f1)
+  mon_name=$(echo "${focused_entry[0]}" | cut -d' ' -f2)
+  switch_monitor "$mon_id" "$mon_name" || true
+fi

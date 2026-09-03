@@ -1,0 +1,40 @@
+#!/bin/bash
+# omarchy:summary=Move focused window to slot N on its current monitor (global mode)
+# omarchy:args=<slot-number>
+#
+# In global workspace mode each monitor owns a dedicated workspace range:
+#   monitor id 0  →  workspaces  1-10
+#   monitor id 1  →  workspaces 11-20
+#   monitor id 2  →  workspaces 21-30
+#
+# SUPER+CTRL+SHIFT+N calls this script with N=1..10.
+# Uses the active window's own monitor (not the cursor monitor) so the move
+# targets the correct workspace range regardless of where the cursor is.
+# The monitor display does NOT change — the window disappears silently to slot N.
+# Press SUPER+N to switch all monitors to that slot and find the windows there.
+
+set -euo pipefail
+
+SLOT="${1:-}"
+if [[ -z "$SLOT" || ! "$SLOT" =~ ^([1-9]|10)$ ]]; then
+  echo "Usage: $0 <slot 1-10>" >&2
+  exit 1
+fi
+
+# Get the active window's address and monitor id in one call.
+# .monitor in activewindow JSON is the Hyprland monitor id (integer), not the name.
+active=$(hyprctl activewindow -j 2>/dev/null)
+win_address=$(echo "$active" | jq -r '.address // empty')
+monitor_id=$(echo "$active"  | jq -r '.monitor // empty')
+
+if [[ -z "$win_address" || -z "$monitor_id" ]]; then
+  exit 0  # no active window; silent no-op
+fi
+
+target_ws=$(( monitor_id * 10 + SLOT ))
+
+# Move this specific window (by address) to the target workspace silently.
+# The monitor does not follow — window vanishes from current slot.
+# Subsequent calls to this script for other windows work immediately because
+# the monitor display hasn't changed.
+hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '$target_ws', window = 'address:$win_address', follow = false }))" >/dev/null
