@@ -39,6 +39,8 @@
 #
 # Processing order: highest-base monitors first, originally-focused last.
 
+set -euo pipefail
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" || ! "$TARGET" =~ ^([1-9]|10)$ ]]; then
   echo "Usage: $0 <slot 1-10>" >&2
@@ -48,6 +50,9 @@ fi
 # ── Load stable base map ──────────────────────────────────────────────────────
 # omarchy-monitor-base sync: allocates bases for any unseen monitors, persists,
 # prints "name base" lines. We build an associative array: bases["HDMI-1"]=10
+#
+# NOTE: bash associative arrays are NOT exported to subshells. The base lookup
+# must happen in the parent shell, not inside a pipeline's while-read subshell.
 declare -A bases
 while IFS=' ' read -r mon_name mon_base; do
   [[ -n "$mon_name" && -n "$mon_base" ]] && bases["$mon_name"]="$mon_base"
@@ -56,41 +61,47 @@ done < <(omarchy-monitor-base sync 2>/dev/null)
 # ── Snapshot monitor list ─────────────────────────────────────────────────────
 monitors_json=$(hyprctl monitors -j)
 
-# Resolve workspace ID for a monitor by name: base + slot.
-# Falls back to current numeric id * 10 if the name is not in the map
-# (shouldn't happen after sync, but safe fallback).
+# Return the workspace ID for a monitor: base + slot.
+# Uses the parent-shell bases array directly — no subshell, no echo.
+# Falls back to mon_id * 10 only if the name is absent from the map.
 ws_for_monitor() {
   local mon_name="$1" mon_id="$2"
   local base="${bases[$mon_name]:-}"
   if [[ -z "$base" ]]; then
-    base=$(( mon_id * 10 ))  # fallback only
+    base=$(( mon_id * 10 ))
   fi
-  echo $(( base + TARGET ))
+  _ws_result=$(( base + TARGET ))
 }
 
-# Build ordered list: non-focused highest-base first, focused monitor last.
-# "Highest base first" mirrors the old "highest id first" ordering: external
-# monitors (higher bases) are switched before the internal panel.
-readarray -t non_focused < <(
-  echo "$monitors_json" \
-    | jq -r '.[] | select(.focused | not) | "\(.id) \(.name)"' \
-    | while read -r mon_id mon_name; do
-        base="${bases[$mon_name]:-$(( mon_id * 10 ))}"
-        echo "$base $mon_id $mon_name"
-      done \
-    | sort -rn \
-    | awk '{print $2, $3}'
+# ── Build ordered monitor lists in the parent shell ───────────────────────────
+# Non-focused monitors are processed highest-base first; the focused monitor
+# last so keyboard focus ends up on the monitor the user was using.
+#
+# The sort input is built by a while-read loop running in the PARENT shell
+# (process substitution, not a pipeline) so it can read the bases array.
+# Each line: "<base> <id> <name>" for sort -rn, then we strip the base prefix.
+
+mapfile -t _sort_input < <(
+  while IFS=' ' read -r mon_id mon_name; do
+    base="${bases[$mon_name]:-$(( mon_id * 10 ))}"
+    echo "$base $mon_id $mon_name"
+  done < <(echo "$monitors_json" | jq -r '.[] | select(.focused | not) | "\(.id) \(.name)"')
 )
-readarray -t focused_entry < <(
-  echo "$monitors_json" \
-    | jq -r '.[] | select(.focused) | "\(.id) \(.name)"'
+
+mapfile -t non_focused < <(
+  printf '%s\n' "${_sort_input[@]}" | sort -rn | awk '{print $2, $3}'
+)
+
+mapfile -t focused_entry < <(
+  echo "$monitors_json" | jq -r '.[] | select(.focused) | "\(.id) \(.name)"'
 )
 
 switch_monitor() {
   local mon_id="$1"
   local mon_name="$2"
-  local ws
-  ws=$(ws_for_monitor "$mon_name" "$mon_id")
+  local _ws_result
+  ws_for_monitor "$mon_name" "$mon_id"
+  local ws="$_ws_result"
 
   # Re-query clients fresh for this monitor so we see any changes from earlier
   # iterations (windows stashed to 999, prior workspace assignments, etc.).
@@ -98,17 +109,17 @@ switch_monitor() {
   clients_now=$(hyprctl clients -j 2>/dev/null) || clients_now="[]"
 
   # Detect a fullscreen=2 window on this monitor (by address).
-  local fs_addr orig_ws
+  local fs_addr="" orig_ws=""
   fs_addr=$(echo "$clients_now" | jq -r \
     --argjson mid "$mon_id" \
     '.[] | select(.monitor == $mid and .fullscreen == 2) | .address' \
-    2>/dev/null | head -1) || fs_addr=""
+    2>/dev/null | head -1) || true
 
   if [[ -n "$fs_addr" ]]; then
     orig_ws=$(echo "$clients_now" | jq -r \
       --arg addr "$fs_addr" \
       '.[] | select(.address == $addr) | .workspace.id' \
-      2>/dev/null) || orig_ws=""
+      2>/dev/null) || true
   fi
 
   # Stash fullscreen window to ws 999 by address (no focus change).

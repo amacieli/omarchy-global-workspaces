@@ -13,13 +13,11 @@
 # Storage: ~/.local/state/omarchy/monitor-bases.json
 # Format:  { "eDP-1": 0, "HDMI-1": 10, "DP-2": 20 }
 #
-# The internal monitor is assigned base 0. Further monitors are assigned the next
-# free multiple of 10. Assignment is deterministic: within a single "sync" call,
-# new monitors are assigned in the order hyprctl reports them (sorted by current
-# id), so re-running gives the same result as long as the same monitors are seen
-# for the first time together.
+# Assignment is deterministic: within a single "sync" call, new monitors are
+# assigned in the order hyprctl reports them (sorted by current id ascending),
+# so re-running with the same monitors is always a no-op.
 
-import json, os, subprocess, sys
+import json, os, subprocess, sys, tempfile
 
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 BASES_FILE = os.path.join(STATE_DIR, "monitor-bases.json")
@@ -36,15 +34,25 @@ def load() -> dict:
 
 
 def save(bases: dict) -> None:
+    """Atomically write bases to disk. Uses a temp file + os.replace() so a
+    mid-write kill never leaves a truncated/corrupt JSON file, and so QML's
+    FileView watcher sees a complete file on every change notification."""
     os.makedirs(STATE_DIR, exist_ok=True)
-    with open(BASES_FILE, "w") as f:
-        json.dump(bases, f, indent=2, sort_keys=True)
-        f.write("\n")
+    fd, tmp = tempfile.mkstemp(dir=STATE_DIR, prefix=".monitor-bases-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(bases, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, BASES_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def next_free_base(bases: dict) -> int:
-    if not bases:
-        return 0
     used = set(bases.values())
     candidate = 0
     while candidate in used:
@@ -67,22 +75,14 @@ def sync() -> dict:
     bases = load()
     changed = False
 
-    # Sort by current Hyprland id so new monitors get bases in a deterministic order.
+    # Sort by current Hyprland id so new monitors are assigned bases in a
+    # stable, deterministic order within a single sync call.
     for mon in sorted(monitors, key=lambda m: m.get("id", 0)):
         name = mon.get("name", "")
-        if not name:
+        if not name or name in bases:
             continue
-        if name not in bases:
-            # Check whether this is the internal monitor (focused at boot, typically
-            # described as "Built-in" or connected to eDP). We assign base 0 to the
-            # first internal panel seen; everything else gets the next free base.
-            description = mon.get("description", "") or ""
-            is_internal = "built-in" in description.lower() or name.lower().startswith("edp")
-            if is_internal and 0 not in bases.values():
-                bases[name] = 0
-            else:
-                bases[name] = next_free_base(bases)
-            changed = True
+        bases[name] = next_free_base(bases)
+        changed = True
 
     if changed:
         save(bases)

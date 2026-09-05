@@ -123,10 +123,6 @@ BarWidget {
     return 0
   }
 
-  // The stable workspace base for the monitor this bar is on.
-  // Uses the name-keyed map, NOT monitorId * 10.
-  readonly property int thisMonitorOffset: root.monitorBase(root.thisMonitorName)
-
   // ── AW slot list ───────────────────────────────────────────────────────────
   // Global mode: always [1, 2, 3, 4, 5] — stable, independent of which
   // Hyprland WS objects happen to exist at any moment.
@@ -148,11 +144,10 @@ BarWidget {
   }
 
   // ── Focused slot ───────────────────────────────────────────────────────────
-  // Global mode: all monitors switch together, so ANY monitor's active WS
-  // minus its stable base gives the current slot. We iterate all connected
-  // monitors and use the first one with a valid activeWorkspace — this handles
-  // clamshell mode (internal panel off, monitor id 0 absent) and docked-only
-  // setups where the first monitor may not be id 0.
+  // Global mode: use Hyprland.focusedMonitor.activeWorkspace minus its stable
+  // base. The focused monitor always receives IPC events first, so it is never
+  // stale — unlike iterating Hyprland.monitors.values and taking the first
+  // result, which may be a monitor that hasn't received an update yet.
   //
   // Local mode: match Hyprland.focusedWorkspace.id (stock behavior).
 
@@ -161,18 +156,10 @@ BarWidget {
       return Hyprland.focusedWorkspace !== null &&
              Hyprland.focusedWorkspace.id === slot
     }
-    // Global mode: read any connected monitor's active workspace and subtract
-    // its stable base. All monitors are on the same slot in global mode so any
-    // monitor gives the correct answer.
-    var mons = Hyprland.monitors.values
-    for (var m = 0; m < mons.length; m++) {
-      var mon = mons[m]
-      if (mon.activeWorkspace !== null) {
-        var base = root.monitorBase(mon.name)
-        return (mon.activeWorkspace.id - base) === slot
-      }
-    }
-    return false
+    // Global mode: the focused monitor's activeWorkspace is always current.
+    var mon = Hyprland.focusedMonitor
+    if (mon === null || mon.activeWorkspace === null) return false
+    return (mon.activeWorkspace.id - root.monitorBase(mon.name)) === slot
   }
 
   // ── Occupied indicator ────────────────────────────────────────────────────

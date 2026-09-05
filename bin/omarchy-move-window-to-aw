@@ -5,9 +5,9 @@
 #
 # GLOBAL MODE (workspace-global.lua flag present):
 #   Calls omarchy-hyprland-workspace-global-move-window N.
-#   That script reads the active window's monitor id, computes (monitorId*10+N),
-#   and silently moves the window there. The display does not change — press
-#   SUPER+N to follow the window to that slot.
+#   That script reads the active window's monitor name, looks up its stable
+#   base, and silently moves the window to WS(base+N). The display does not
+#   change — press SUPER+N to follow the window to that slot.
 #
 # LOCAL MODE (flag absent):
 #   Moves the focused window to raw Hyprland workspace N on the current monitor,
