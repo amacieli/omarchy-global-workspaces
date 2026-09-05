@@ -24,11 +24,28 @@
 --   3. Also stores the sorted monitor list in _G.omarchy_global_ws_monitors
 --      for use by other config modules (tiling.lua, etc.).
 --
--- NOTE: ipairs() is NOT used here intentionally. omarchy-menu-keybindings
--- evaluates this config under a stub hl whose __index returns a truthy sentinel
--- for every key, causing ipairs() to never terminate (omacom/omarchy#7025).
--- Numeric for i = 1, #tbl do ... end is immune to this because # does not
--- consult __index.
+-- STUB-SAFETY NOTES:
+--   omarchy-menu-keybindings evaluates this file under a stub Lua environment
+--   to extract keybinding metadata without running a real Hyprland session.
+--   Two hazards to avoid:
+--
+--   1. ipairs() on a stub object hangs (omacom/omarchy#7025): the stub's
+--      __index returns a truthy sentinel for every key, so ipairs() never
+--      sees nil and loops forever. Fixed: use numeric for i = 1, #tbl.
+--
+--   2. io.popen() / hl.get_monitors() under the stub: io.popen actually
+--      executes the shell command, causing omarchy-monitor-base to call
+--      hyprctl which blocks waiting for a Hyprland socket that doesn't
+--      exist in the menu context. Fixed: gate both calls behind a
+--      HYPRLAND_INSTANCE_SIGNATURE check — that env var is only set inside
+--      a live Hyprland session.
+
+-- Only run the Hyprland-dependent setup when inside a real session.
+if not os.getenv("HYPRLAND_INSTANCE_SIGNATURE") then
+  _G.omarchy_monitor_bases = {}
+  _G.omarchy_global_ws_monitors = {}
+  return
+end
 
 local function parse_bases()
   -- Run omarchy-monitor-base sync: allocates any missing bases for currently
