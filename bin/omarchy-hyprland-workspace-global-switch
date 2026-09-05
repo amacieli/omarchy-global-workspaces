@@ -122,9 +122,16 @@ switch_monitor() {
       2>/dev/null) || true
   fi
 
-  # Stash fullscreen window to ws 999 by address (no focus change).
+  # Stash fullscreen window to a scratch workspace pinned to THIS monitor.
+  # WS999 is monitor-agnostic — Hyprland can assign it to any monitor,
+  # causing the fullscreen window to briefly appear ("shadow") on whichever
+  # monitor last changed. Using base+99 (e.g. WS109 for base=10) keeps the
+  # stash within this monitor's own range, so Hyprland never moves it.
+  local stash_ws=$(( ${bases[$mon_name]:-$(( mon_id * 10 ))} + 99 ))
   if [[ -n "$fs_addr" && -n "$orig_ws" ]]; then
-    hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '999', window = 'address:$fs_addr', follow = false }))" \
+    hyprctl eval "hl.dispatch(hl.dsp.workspace.move({ workspace = '$stash_ws', monitor = '$mon_name' }))" \
+      >/dev/null 2>&1 || true
+    hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '$stash_ws', window = 'address:$fs_addr', follow = false }))" \
       >/dev/null 2>&1 || true
   fi
 

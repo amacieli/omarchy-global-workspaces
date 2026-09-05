@@ -237,6 +237,8 @@ BarWidget {
 
     // Local mode fallback.
     var monId = root.thisMonitorId
+    var monBase = root.monitorBase(root.thisMonitorName)
+    var stashWs = monBase + 99  // monitor-pinned scratch; avoids cross-monitor shadow
     var bashCmd =
       "cjson=$(hyprctl clients -j 2>/dev/null || echo '[]'); " +
       "fs_addr=$(echo \"$cjson\" | jq -r --argjson mid " + monId + " " +
@@ -246,7 +248,8 @@ BarWidget {
       "if [ -n \"$fs_addr\" ]; then " +
       "  orig_ws=$(echo \"$cjson\" | jq -r --arg addr \"$fs_addr\" " +
         "'.[] | select(.address == $addr) | .workspace.id' 2>/dev/null); " +
-      "  hyprctl eval \"hl.dispatch(hl.dsp.window.move({ workspace = '999', window = 'address:$fs_addr', follow = false }))\" >/dev/null 2>&1 || true; " +
+      "  hyprctl eval \"hl.dispatch(hl.dsp.workspace.move({ workspace = '" + stashWs + "', monitor = '" + root.thisMonitorName + "' }))\" >/dev/null 2>&1 || true; " +
+      "  hyprctl eval \"hl.dispatch(hl.dsp.window.move({ workspace = '" + stashWs + "', window = 'address:$fs_addr', follow = false }))\" >/dev/null 2>&1 || true; " +
       "fi; " +
       "hyprctl eval \"hl.dispatch(hl.dsp.focus({ workspace = '" + slot + "' }))\" >/dev/null 2>&1 || true; " +
       "if [ -n \"$fs_addr\" ] && [ -n \"$orig_ws\" ]; then " +
