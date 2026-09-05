@@ -13,18 +13,27 @@ import qs.Ui
 //   AW (Apparent Workspace): what the user sees — AW1 through AW5.
 //     Switching to AWN moves EVERY monitor to its corresponding Hyprland WS.
 //   WS (Hyprland Workspace): the underlying integer ID Hyprland tracks.
-//     Each monitor owns an exclusive range (offset = monitorId * 10):
-//       monitor 0  →  WS  1-10
-//       monitor 1  →  WS 11-20
-//       monitor 2  →  WS 21-30
-//     AWN on monitor M = WS(M*10 + N).
+//     Each monitor owns an exclusive range starting at a stable *base*:
+//       base is assigned by monitor name (e.g. "eDP-1", "HDMI-1"), not by
+//       Hyprland's transient numeric id. See omarchy-monitor-base for details.
+//     AWN on monitor M = WS(base(M) + N).
+//
+// STABLE-BASE SCHEME:
+//   Hyprland does not reuse numeric monitor ids after hotplug (#2601).
+//   Using the monitor's OS name as a stable key means the same physical monitor
+//   always owns the same workspace range regardless of its current numeric id.
+//   The base map is persisted in ~/.local/state/omarchy/monitor-bases.json and
+//   updated by omarchy-monitor-base sync (called by the switch script and the
+//   toggle Lua on every Hyprland reload).
 //
 // GLOBAL MODE (workspace-global.lua toggle present):
 //   - Bar always shows exactly 5 buttons labelled 1-5 (AW slots).
 //   - Clicking AWN calls omarchy-hyprland-workspace-global-switch N, which
 //     moves all monitors to their slot-N WS simultaneously.
-//   - Focused: all bars agree — derived from any monitor's activeWorkspace.
-//   - Occupied: AWN is lit if ANY monitor has windows on WS(monitorId*10+N).
+//   - Focused: derived from ANY connected monitor's active workspace minus its
+//     stable base (not hardcoded to monitor id 0, which may not exist in
+//     clamshell/docked-only mode).
+//   - Occupied: AWN is lit if ANY monitor has windows on WS(base(M)+N).
 //
 // LOCAL MODE (toggle absent):
 //   - Falls back to stock omarchy behavior: shows raw Hyprland WS IDs 1-5
@@ -60,6 +69,42 @@ BarWidget {
     onFileChanged: globalFlagProbe.running = true
   }
 
+  // ── Stable monitor base map ────────────────────────────────────────────────
+  // Loaded from ~/.local/state/omarchy/monitor-bases.json.
+  // Maps monitor name → workspace base (e.g. {"eDP-1": 0, "HDMI-1": 10}).
+  // Reloaded whenever the file changes (hotplug adds a new monitor name).
+  //
+  // We read this as plain text rather than spawning jq so the QML side never
+  // needs to know or duplicate the offset formula — it just asks "what base
+  // does monitor X have?" and gets an integer back.
+
+  property var monitorBaseMap: ({})
+
+  readonly property string basesFilePath:
+    (Quickshell.env("HOME") || "") + "/.local/state/omarchy/monitor-bases.json"
+
+  FileView {
+    id: basesFileView
+    path: root.basesFilePath
+    watchChanges: true
+    printErrors: false
+    onTextChanged: function() {
+      try {
+        root.monitorBaseMap = JSON.parse(text)
+      } catch(e) {
+        root.monitorBaseMap = {}
+      }
+    }
+  }
+
+  // Look up the stable base for a monitor by its OS name.
+  // Falls back to 0 if the name is not yet in the map (shouldn't happen
+  // after sync, but prevents a NaN from propagating into workspace IDs).
+  function monitorBase(name) {
+    var b = root.monitorBaseMap[name]
+    return (b !== undefined && b !== null) ? b : 0
+  }
+
   // ── This bar's monitor identity ────────────────────────────────────────────
   // Needed for:
   //   (a) global mode: derive focused slot from this monitor's active WS
@@ -78,7 +123,9 @@ BarWidget {
     return 0
   }
 
-  readonly property int thisMonitorOffset: root.thisMonitorId * 10
+  // The stable workspace base for the monitor this bar is on.
+  // Uses the name-keyed map, NOT monitorId * 10.
+  readonly property int thisMonitorOffset: root.monitorBase(root.thisMonitorName)
 
   // ── AW slot list ───────────────────────────────────────────────────────────
   // Global mode: always [1, 2, 3, 4, 5] — stable, independent of which
@@ -101,10 +148,11 @@ BarWidget {
   }
 
   // ── Focused slot ───────────────────────────────────────────────────────────
-  // Global mode: all monitors switch together, so any monitor's active WS
-  // divided by its offset gives the current slot. We use monitor 0 (offset 0)
-  // as the authoritative source — its active WS id IS the slot number.
-  // All bars read the same value, so all three bars agree.
+  // Global mode: all monitors switch together, so ANY monitor's active WS
+  // minus its stable base gives the current slot. We iterate all connected
+  // monitors and use the first one with a valid activeWorkspace — this handles
+  // clamshell mode (internal panel off, monitor id 0 absent) and docked-only
+  // setups where the first monitor may not be id 0.
   //
   // Local mode: match Hyprland.focusedWorkspace.id (stock behavior).
 
@@ -113,20 +161,22 @@ BarWidget {
       return Hyprland.focusedWorkspace !== null &&
              Hyprland.focusedWorkspace.id === slot
     }
-    // Read monitor 0's active workspace id — that equals the current AW slot.
+    // Global mode: read any connected monitor's active workspace and subtract
+    // its stable base. All monitors are on the same slot in global mode so any
+    // monitor gives the correct answer.
     var mons = Hyprland.monitors.values
-    for (var i = 0; i < mons.length; i++) {
-      if (mons[i].id === 0) {
-        var activeWsId = mons[i].activeWorkspace ? mons[i].activeWorkspace.id : -1
-        // Monitor 0 offset is 0, so activeWsId == slot directly.
-        return activeWsId === slot
+    for (var m = 0; m < mons.length; m++) {
+      var mon = mons[m]
+      if (mon.activeWorkspace !== null) {
+        var base = root.monitorBase(mon.name)
+        return (mon.activeWorkspace.id - base) === slot
       }
     }
     return false
   }
 
   // ── Occupied indicator ────────────────────────────────────────────────────
-  // Global mode: AWN is occupied if ANY monitor has windows on WS(monId*10+N).
+  // Global mode: AWN is occupied if ANY monitor has windows on WS(base(M)+N).
   // All three bars show the same occupancy state for each slot.
   //
   // Local mode: check raw WS id == slot for windows (stock behavior).
@@ -141,15 +191,17 @@ BarWidget {
       }
       return false
     }
-    // Global mode: walk all monitors, check WS(monitorId*10 + slot).
-    var mons = Hyprland.monitors.values
-    for (var m = 0; m < mons.length; m++) {
-      var wsId = mons[m].id * 10 + slot
-      var wsList = Hyprland.workspaces.values
-      for (var w = 0; w < wsList.length; w++) {
-        if (wsList[w].id === wsId && wsList[w].toplevels.values.length > 0) {
-          return true
-        }
+    // Global mode: for each workspace that exists, compute which slot it
+    // represents on its monitor using the stable base. If that slot matches
+    // and it has windows, AW N is occupied.
+    var wsList = Hyprland.workspaces.values
+    for (var w = 0; w < wsList.length; w++) {
+      var ws = wsList[w]
+      if (ws.monitor === null) continue
+      var wsBase = root.monitorBase(ws.monitor.name)
+      var wsSlot = ws.id - wsBase
+      if (wsSlot === slot && ws.toplevels.values.length > 0) {
+        return true
       }
     }
     return false

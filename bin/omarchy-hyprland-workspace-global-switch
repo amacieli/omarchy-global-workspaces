@@ -2,14 +2,23 @@
 # omarchy:summary=Switch all monitors to the same workspace slot (global mode)
 # omarchy:args=<slot-number>
 #
-# In global workspace mode each monitor owns a dedicated workspace range:
-#   monitor id 0  →  workspaces  1-10
-#   monitor id 1  →  workspaces 11-20
-#   monitor id 2  →  workspaces 21-30
-#   …and so on (offset = monitor_id * 10)
+# In global workspace mode each monitor owns a dedicated workspace range whose
+# base is assigned by monitor *name* (not by Hyprland's transient numeric id).
+# The stable base is stored in ~/.local/state/omarchy/monitor-bases.json and
+# managed by omarchy-monitor-base.
+#
+#   Monitor "eDP-1"  →  base 0   →  workspaces  1-10
+#   Monitor "HDMI-1" →  base 10  →  workspaces 11-20
+#   Monitor "DP-2"   →  base 20  →  workspaces 21-30
+#
+# Why name-keyed bases instead of monitorId * 10:
+#   Hyprland does not reuse numeric monitor ids after hotplug (#2601).
+#   Unplugging id=1 and replugging gives id=3, orphaning workspaces 11-20.
+#   Using the monitor's name as the stable key guarantees the same physical
+#   monitor always owns the same workspace range regardless of its current id.
 #
 # Pressing SUPER+N in global mode calls this script with N=1..10.
-# The script dispatches workspace (offset + N) on every connected monitor.
+# The script dispatches workspace (base + N) on every connected monitor.
 #
 # ROOT CAUSE OF WORKSPACE THEFT:
 #   Hyprland tracks "workspace W lives on monitor M". When you dispatch
@@ -28,7 +37,7 @@
 #   a fullscreen=2 window. We detect by address, stash to workspace 999 (no
 #   focus change, address-targeted), switch the workspace, then restore.
 #
-# Processing order: highest-offset monitors first, originally-focused last.
+# Processing order: highest-base monitors first, originally-focused last.
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" || ! "$TARGET" =~ ^([1-9]|10)$ ]]; then
@@ -36,13 +45,41 @@ if [[ -z "$TARGET" || ! "$TARGET" =~ ^([1-9]|10)$ ]]; then
   exit 1
 fi
 
-# Snapshot monitor list once (stable for the duration of the switch)
+# ── Load stable base map ──────────────────────────────────────────────────────
+# omarchy-monitor-base sync: allocates bases for any unseen monitors, persists,
+# prints "name base" lines. We build an associative array: bases["HDMI-1"]=10
+declare -A bases
+while IFS=' ' read -r mon_name mon_base; do
+  [[ -n "$mon_name" && -n "$mon_base" ]] && bases["$mon_name"]="$mon_base"
+done < <(omarchy-monitor-base sync 2>/dev/null)
+
+# ── Snapshot monitor list ─────────────────────────────────────────────────────
 monitors_json=$(hyprctl monitors -j)
 
-# Build ordered list: non-focused highest-id first, focused monitor last.
+# Resolve workspace ID for a monitor by name: base + slot.
+# Falls back to current numeric id * 10 if the name is not in the map
+# (shouldn't happen after sync, but safe fallback).
+ws_for_monitor() {
+  local mon_name="$1" mon_id="$2"
+  local base="${bases[$mon_name]:-}"
+  if [[ -z "$base" ]]; then
+    base=$(( mon_id * 10 ))  # fallback only
+  fi
+  echo $(( base + TARGET ))
+}
+
+# Build ordered list: non-focused highest-base first, focused monitor last.
+# "Highest base first" mirrors the old "highest id first" ordering: external
+# monitors (higher bases) are switched before the internal panel.
 readarray -t non_focused < <(
   echo "$monitors_json" \
-    | jq -r 'sort_by(.id) | reverse | .[] | select(.focused | not) | "\(.id) \(.name)"'
+    | jq -r '.[] | select(.focused | not) | "\(.id) \(.name)"' \
+    | while read -r mon_id mon_name; do
+        base="${bases[$mon_name]:-$(( mon_id * 10 ))}"
+        echo "$base $mon_id $mon_name"
+      done \
+    | sort -rn \
+    | awk '{print $2, $3}'
 )
 readarray -t focused_entry < <(
   echo "$monitors_json" \
@@ -52,7 +89,8 @@ readarray -t focused_entry < <(
 switch_monitor() {
   local mon_id="$1"
   local mon_name="$2"
-  local ws=$(( mon_id * 10 + TARGET ))
+  local ws
+  ws=$(ws_for_monitor "$mon_name" "$mon_id")
 
   # Re-query clients fresh for this monitor so we see any changes from earlier
   # iterations (windows stashed to 999, prior workspace assignments, etc.).
@@ -98,7 +136,7 @@ switch_monitor() {
   fi
 }
 
-# Switch non-focused monitors first (highest id first)
+# Switch non-focused monitors first (highest base first)
 for entry in "${non_focused[@]:-}"; do
   [[ -z "$entry" ]] && continue
   mon_id=$(echo "$entry" | cut -d' ' -f1)

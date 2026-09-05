@@ -75,6 +75,10 @@ sudo install -m 0755 "$REPO_DIR/bin/omarchy-hyprland-workspace-global-move-windo
   "$OMARCHY_PATH/bin/omarchy-hyprland-workspace-global-move-window"
 green "  ✓ bin/omarchy-hyprland-workspace-global-move-window"
 
+sudo install -m 0755 "$REPO_DIR/bin/omarchy-monitor-base" \
+  "$OMARCHY_PATH/bin/omarchy-monitor-base"
+green "  ✓ bin/omarchy-monitor-base"
+
 # ── User scripts ───────────────────────────────────────────────────────────────
 yellow "Installing user scripts..."
 
@@ -144,6 +148,21 @@ else
     cat "$BINDINGS_BLOCK" >> "$BINDINGS"
     green "  ✓ ~/.config/hypr/bindings.lua (block appended)"
   fi
+fi
+
+# ── Seed monitor base map ──────────────────────────────────────────────────────
+yellow "Seeding stable monitor base map..."
+if command -v omarchy-monitor-base &>/dev/null || [[ -x "$OMARCHY_PATH/bin/omarchy-monitor-base" ]]; then
+  # Use the just-installed system copy if not yet on PATH.
+  MONITOR_BASE_BIN="${OMARCHY_PATH}/bin/omarchy-monitor-base"
+  if "$MONITOR_BASE_BIN" sync 2>/dev/null; then
+    green "  ✓ monitor-bases.json seeded"
+    info "    $(cat "$HOME/.local/state/omarchy/monitor-bases.json" 2>/dev/null || echo '(not yet created)')"
+  else
+    yellow "  ! Could not seed monitor bases — run: omarchy-monitor-base sync"
+  fi
+else
+  yellow "  ! omarchy-monitor-base not found — run after install: omarchy-monitor-base sync"
 fi
 
 # ── Reload ─────────────────────────────────────────────────────────────────────

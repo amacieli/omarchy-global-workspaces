@@ -2,13 +2,17 @@
 # omarchy:summary=Move focused window to slot N on its current monitor (global mode)
 # omarchy:args=<slot-number>
 #
-# In global workspace mode each monitor owns a dedicated workspace range:
-#   monitor id 0  →  workspaces  1-10
-#   monitor id 1  →  workspaces 11-20
-#   monitor id 2  →  workspaces 21-30
+# In global workspace mode each monitor owns a dedicated workspace range whose
+# base is assigned by monitor *name* (not by Hyprland's transient numeric id).
+# The stable base is stored in ~/.local/state/omarchy/monitor-bases.json and
+# managed by omarchy-monitor-base.
 #
-# SUPER+CTRL+SHIFT+N calls this script with N=1..10.
-# Uses the active window's own monitor (not the cursor monitor) so the move
+#   Monitor "eDP-1"  →  base 0   →  workspaces  1-10
+#   Monitor "HDMI-1" →  base 10  →  workspaces 11-20
+#   Monitor "DP-2"   →  base 20  →  workspaces 21-30
+#
+# SUPER+SHIFT+N calls this script with N=1..10.
+# Uses the active window's own monitor name (not the cursor monitor) so the move
 # targets the correct workspace range regardless of where the cursor is.
 # The monitor display does NOT change — the window disappears silently to slot N.
 # Press SUPER+N to switch all monitors to that slot and find the windows there.
@@ -23,6 +27,7 @@ fi
 
 # Get the active window's address and monitor id in one call.
 # .monitor in activewindow JSON is the Hyprland monitor id (integer), not the name.
+# We need the id to cross-reference the monitor list and get the monitor's name.
 active=$(hyprctl activewindow -j 2>/dev/null)
 win_address=$(echo "$active" | jq -r '.address // empty')
 monitor_id=$(echo "$active"  | jq -r '.monitor // empty')
@@ -31,7 +36,24 @@ if [[ -z "$win_address" || -z "$monitor_id" ]]; then
   exit 0  # no active window; silent no-op
 fi
 
-target_ws=$(( monitor_id * 10 + SLOT ))
+# Resolve the monitor's name from its current Hyprland id.
+# We need the name because the stable base is keyed by name, not id.
+monitor_name=$(hyprctl monitors -j 2>/dev/null \
+  | jq -r --argjson mid "$monitor_id" '.[] | select(.id == $mid) | .name' \
+  | head -1)
+
+if [[ -z "$monitor_name" ]]; then
+  # Fallback: no name found — use old formula so the script still works.
+  target_ws=$(( monitor_id * 10 + SLOT ))
+else
+  # Look up the stable base for this monitor name.
+  base=$(omarchy-monitor-base 2>/dev/null | awk -v name="$monitor_name" '$1 == name {print $2; exit}')
+  if [[ -z "$base" ]]; then
+    # Not in map yet (shouldn't happen if sync ran at toggle time).
+    base=$(( monitor_id * 10 ))  # fallback
+  fi
+  target_ws=$(( base + SLOT ))
+fi
 
 # Move this specific window (by address) to the target workspace silently.
 # The monitor does not follow — window vanishes from current slot.
