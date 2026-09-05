@@ -207,6 +207,30 @@ BarWidget {
     return false
   }
 
+  // ── IPC refresh handler ───────────────────────────────────────────────────
+  // Quickshell's HyprlandMonitor.activeWorkspace only updates when that monitor
+  // generates an IPC event. In a synchronized multi-monitor switch, monitors
+  // that didn't have keyboard focus at switch time receive no event and sit
+  // stale until something incidental (e.g. cursor hover) triggers one.
+  //
+  // The switch script calls:
+  //   qs ipc call omarchy.workspaces refresh
+  // immediately after dispatching all workspace moves (backgrounded, so it
+  // doesn't add latency to the switch itself). This forces a full re-query of
+  // Hyprland state on every bar simultaneously, fixing the stale highlight.
+  //
+  // Because each bar is its own Quickshell process, qs ipc call without a
+  // --pid flag broadcasts to all running instances — one call covers all bars.
+
+  IpcHandler {
+    target: "omarchy.workspaces"
+
+    function refresh(): void {
+      Hyprland.refreshMonitors()
+      Hyprland.refreshWorkspaces()
+    }
+  }
+
   // ── Switch to an AW slot ──────────────────────────────────────────────────
   // Global mode: omarchy-hyprland-workspace-global-switch <slot> handles all
   // monitors, fullscreen=2, and workspace-theft prevention internally.

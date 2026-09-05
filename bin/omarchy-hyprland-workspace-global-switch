@@ -150,3 +150,12 @@ if [[ -n "${focused_entry[0]:-}" ]]; then
   mon_name=$(echo "${focused_entry[0]}" | cut -d' ' -f2)
   switch_monitor "$mon_id" "$mon_name" || true
 fi
+
+# ── Refresh all bars ──────────────────────────────────────────────────────────
+# Quickshell's HyprlandMonitor.activeWorkspace only updates when a monitor
+# produces an IPC event. Monitors that switched without keyboard focus sit
+# stale until something incidental touches them. Calling refresh on the
+# IpcHandler forces all bars to re-query Hyprland state simultaneously,
+# fixing the stale focus highlight.
+# Backgrounded so it doesn't add latency to the switch itself.
+qs ipc call omarchy.workspaces refresh &>/dev/null &
