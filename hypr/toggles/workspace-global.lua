@@ -90,3 +90,48 @@ for i = 1, #monitors do
     base = _G.omarchy_monitor_bases[mon.name] or (mon.id * 10),
   }
 end
+
+-- ── Materialize persistent workspaces (Issue #5) ─────────────────────────
+-- set_workspace() silently no-ops on workspaces that don't exist yet. We need
+-- all workspace slots pre-created with persistent=true so that switching to
+-- an empty slot works immediately (no silent failures).
+--
+-- This function registers hl.workspace_rule() for every slot (1-10) on every
+-- monitor to ensure they exist even if empty. Persistent workspaces remain
+-- alive even with no windows.
+local function ensure_persistent_workspaces()
+  if not hl.workspace_rule then
+    return  -- Hyprland version too old or not available
+  end
+  
+  for i = 1, #_G.omarchy_global_ws_monitors do
+    local mon = _G.omarchy_global_ws_monitors[i]
+    local base = mon.base
+    
+    -- Register persistent workspace for each slot 1-10 on this monitor
+    for slot = 1, 10 do
+      local ws_id = base + slot
+      local rule_ok = pcall(function()
+        hl.workspace_rule({
+          id = ws_id,
+          monitor = mon.name,
+          persistent = true,
+          -- layout defaults to current; no need to override here
+        })
+      end)
+      -- Silently ignore errors; rule registration is best-effort
+    end
+  end
+end
+
+-- Ensure all workspace slots exist before any focus dispatch
+ensure_persistent_workspaces()
+
+-- ── Delayed verification (Issue #6) ────────────────────────────────────
+-- hl.workspace_rule() doesn't materialize synchronously. Schedule a retry
+-- script to verify all workspaces exist after a short delay. This catches the
+-- race where a fresh monitor's workspaces aren't created yet.
+local ok = pcall(function()
+  os.execute("omarchy-ensure-workspaces &")
+end)
+-- Silently ignore if the script isn't found yet

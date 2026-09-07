@@ -79,6 +79,14 @@ sudo install -m 0755 "$REPO_DIR/bin/omarchy-monitor-base" \
   "$OMARCHY_PATH/bin/omarchy-monitor-base"
 green "  ✓ bin/omarchy-monitor-base"
 
+sudo install -m 0755 "$REPO_DIR/bin/omarchy-ensure-workspaces" \
+  "$OMARCHY_PATH/bin/omarchy-ensure-workspaces"
+green "  ✓ bin/omarchy-ensure-workspaces"
+
+sudo install -m 0755 "$REPO_DIR/bin/omarchy-recover-stranded-windows" \
+  "$OMARCHY_PATH/bin/omarchy-recover-stranded-windows"
+green "  ✓ bin/omarchy-recover-stranded-windows"
+
 # ── User scripts ───────────────────────────────────────────────────────────────
 yellow "Installing user scripts..."
 
@@ -91,6 +99,15 @@ green "  ✓ ~/.local/bin/omarchy-switch-to-aw"
 install -m 0755 "$REPO_DIR/bin/omarchy-move-window-to-aw" \
   "$HOME/.local/bin/omarchy-move-window-to-aw"
 green "  ✓ ~/.local/bin/omarchy-move-window-to-aw"
+
+# Copy recovery/ensure scripts to user bin for direct access
+install -m 0755 "$REPO_DIR/bin/omarchy-ensure-workspaces" \
+  "$HOME/.local/bin/omarchy-ensure-workspaces"
+green "  ✓ ~/.local/bin/omarchy-ensure-workspaces"
+
+install -m 0755 "$REPO_DIR/bin/omarchy-recover-stranded-windows" \
+  "$HOME/.local/bin/omarchy-recover-stranded-windows"
+green "  ✓ ~/.local/bin/omarchy-recover-stranded-windows"
 
 # Ensure ~/.local/bin is on PATH (add to .bashrc/.zshrc if missing).
 for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do

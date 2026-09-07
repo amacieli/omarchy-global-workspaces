@@ -75,6 +75,32 @@ Or from a terminal:
 Both hotkeys check the toggle flag at the moment the key is pressed — switching
 between global and local mode takes effect immediately with no Hyprland reload.
 
+## Recovery and maintenance
+
+### Stranded windows after monitor disconnect
+
+When an external monitor disconnects, windows on its workspaces become inaccessible.
+To recover them:
+
+```bash
+omarchy-recover-stranded-windows
+```
+
+This moves each stranded window to the same logical slot (1-5) on your laptop
+panel or another available monitor, preserving its workspace organization.
+
+### Ensuring workspaces exist
+
+The startup logic automatically materializes persistent workspaces on all connected
+monitors. If you hotplug a new monitor and switching to an empty slot doesn't work,
+run:
+
+```bash
+omarchy-ensure-workspaces
+```
+
+This verifies that all workspace slots exist and refreshes the bar indicators.
+
 ## How the switch script works
 
 `omarchy-hyprland-workspace-global-switch` handles two Hyprland edge cases:

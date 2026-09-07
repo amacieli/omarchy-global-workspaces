@@ -32,6 +32,13 @@
 #   equivalent of "moveworkspacetomonitor". After that, the focus dispatch goes
 #   to the right monitor every time.
 #
+# Cursor warping (cursor:warp_on_change_workspace option):
+#   The focus dispatch respects the warp option, but the pointer only warps on
+#   the FINAL focus dispatch (the originally-focused monitor, set last). This is
+#   correct UX — the cursor follows keyboard focus to the monitor the user was
+#   actively using. Intermediate monitors don't receive pointer warps, which is
+#   the expected behavior for synchronized multi-monitor switches. (Issue #4)
+#
 # Fullscreen=2 workaround:
 #   Hyprland silently ignores workspace-focus dispatches on a monitor that has
 #   a fullscreen=2 window. We detect by address, stash to workspace 999 (no
