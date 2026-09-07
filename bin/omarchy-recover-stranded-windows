@@ -61,7 +61,7 @@ echo
 count_moved=0
 
 # List all workspaces, find those on disconnected monitors
-hyprctl workspaces -j 2>/dev/null | jq -r '.[] | "\(.id) \(.monitor.name)"' | while read -r ws_id mon_name; do
+hyprctl workspaces -j 2>/dev/null | jq -r '.[] | select(.monitor != null) | "\(.id) \(.monitor.name)"' 2>/dev/null | while read -r ws_id mon_name; do
   # Skip if this monitor is still connected
   [[ -n "${current_mons[$mon_name]:-}" ]] && continue
   
@@ -73,7 +73,7 @@ hyprctl workspaces -j 2>/dev/null | jq -r '.[] | "\(.id) \(.monitor.name)"' | wh
   echo "  WS $ws_id (monitor '$mon_name' gone) → moving windows to WS $target_ws (slot $slot)"
   
   # Move all windows from the orphaned workspace
-  hyprctl clients -j 2>/dev/null | jq -r ".[] | select(.workspace.id == $ws_id) | .address" | while read -r addr; do
+  hyprctl clients -j 2>/dev/null | jq -r ".[] | select(.workspace.id == $ws_id) | .address" 2>/dev/null | while read -r addr; do
     [[ -z "$addr" ]] && continue
     hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '$target_ws', window = 'address:$addr', follow = false }))" \
       >/dev/null 2>&1 || true
