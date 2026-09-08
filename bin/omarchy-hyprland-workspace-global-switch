@@ -142,6 +142,32 @@ switch_monitor() {
       >/dev/null 2>&1 || true
   fi
 
+  # ── Fix for workspace ownership mismatch (Issue #MISSING: Ixion disappears) ──
+  # When windows on the target workspace ($ws) are physically on OTHER monitors
+  # (not $mon_name), workspace.move() alone doesn't move them. The workspace
+  # metadata reassigns, but the windows stay on their original monitors. On the
+  # next switch, this creates a "shadow" workspace where the old monitor's
+  # windows are invisible.
+  #
+  # Solution: Find all windows on workspaces that SHOULD be on this monitor but
+  # are ACTUALLY on other monitors, and move them explicitly by address.
+  local orphaned_windows
+  orphaned_windows=$(echo "$clients_now" | jq -r \
+    --argjson target_ws "$ws" \
+    --argjson target_mon_id "$mon_id" \
+    '.[] | select(.workspace.id == $target_ws and .monitor != $target_mon_id) | .address' \
+    2>/dev/null || echo "")
+  
+  if [[ -n "$orphaned_windows" ]]; then
+    echo "$orphaned_windows" | while read -r orphan_addr; do
+      [[ -z "$orphan_addr" ]] && continue
+      # Move the orphaned window to the target workspace on the correct monitor.
+      # This ensures the window is physically on the right monitor.
+      hyprctl eval "hl.dispatch(hl.dsp.window.move({ workspace = '$ws', window = 'address:$orphan_addr', follow = false }))" \
+        >/dev/null 2>&1 || true
+    done
+  fi
+
   # Reassign the target workspace to this monitor BEFORE focusing it.
   # This prevents Hyprland from stealing focus to whichever monitor currently
   # owns that workspace, which is the primary cause of "wrong monitor switches".
