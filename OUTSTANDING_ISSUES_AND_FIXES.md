@@ -1,6 +1,36 @@
 # Outstanding Issues from PR #10199 Review
 
-**Status:** 4/10 comments addressed in committed code. 6 still open.
+**Status:** 5/10 comments addressed. 5 still open.
+
+---
+
+## ISSUE #0 (CRITICAL, Sep 8, 2026): Window Disappears When Moved Between Monitors
+
+**Severity:** CRITICAL (user-impacting window visibility loss)  
+**Status:** ✅ FIXED
+
+### Finding
+User: Ixion (Steam game) running on DP-1 (base=10). User focused on HDMI-A-1 (base=0).  
+Action: SUPER+SHIFT+2 to move Ixion to AW#2 (intending primary monitor's slot 2).  
+Bug: Window moved to workspace 10+2=12 (DP-1's slot 2, invisible to user).  
+Effect: Window disappeared from view; user had to search multiple workspaces to find it.
+
+**Root cause:** Script read the active window's **current monitor** instead of **focused monitor** (keyboard focus). In global mode, SUPER+SHIFT+N should move to slot N on the monitor the user is actively using, not the window's monitor.
+
+### Fix Applied (Sep 8, 2026)
+File: `bin/omarchy-hyprland-workspace-global-move-window`  
+**Change:** Target the focused monitor (keyboard focus) instead of window's current monitor.
+
+**Guard:** If the active window is already on the focused monitor, stay on same monitor (no cross-monitor move). Prevents accidental cross-monitor relocations.
+
+**Fullscreen workaround included:** If target monitor has a fullscreen=2 window, stash it temporarily (workspace 999), move the window, restore the fullscreen window. Prevents Hyprland's silent-ignore bug on fullscreen monitors.
+
+### Test Case
+- Window: Ixion on DP-1 (monitor 1)
+- User focus: HDMI-A-1 (monitor 0, base=0)
+- Action: SUPER+SHIFT+2
+- Expected: Ixion moves to workspace 2 (HDMI-A-1's slot 2), visible on primary monitor
+- Result: ✅ Ixion now correctly visible on HDMI-A-1, slot 2
 
 ---
 
