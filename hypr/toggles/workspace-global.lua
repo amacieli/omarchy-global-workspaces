@@ -113,7 +113,7 @@ local function ensure_persistent_workspaces()
       local ws_id = base + slot
       local rule_ok = pcall(function()
         hl.workspace_rule({
-          id = ws_id,
+          workspace = tostring(ws_id),
           monitor = mon.name,
           persistent = true,
           -- layout defaults to current; no need to override here
