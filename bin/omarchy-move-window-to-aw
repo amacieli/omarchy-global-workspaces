@@ -1,5 +1,6 @@
 #!/bin/bash
-# omarchy-move-window-to-aw <slot 1-10>
+# omarchy:summary=Move focused window to AW slot N (global) or current monitor (local)
+# omarchy:args=<slot 1-10>
 #
 # Move the focused window to AW slot N, respecting the global/local toggle.
 #

@@ -1,5 +1,6 @@
 #!/bin/bash
-# omarchy-switch-to-aw <slot 1-10>
+# omarchy:summary=Switch all monitors to AW slot N (global) or current monitor (local)
+# omarchy:args=<slot 1-10>
 #
 # Switch to AW slot N, respecting the global/local toggle at runtime.
 #

@@ -1,22 +1,14 @@
 #!/bin/bash
-# omarchy:summary=Move focused window to slot N on the focused monitor (global mode, FIXED)
+# omarchy:summary=Move focused window to slot N on the focused monitor (global mode)
 # omarchy:args=<slot-number>
 #
-# FIX (Sep 8, 2026): Changed behavior to target the FOCUSED monitor, not the
-# window's current monitor. This prevents windows from disappearing when moved
-# between monitors.
+# Always targets the FOCUSED monitor (keyboard focus), not the window's current
+# monitor. SUPER+SHIFT+N moves the active window to slot N on whichever monitor
+# the user is actively using.
 #
-# BEFORE:
-#   Active window on DP-1, user focused on HDMI-A-1:
-#   SUPER+SHIFT+2 → moves to DP-1's slot 2 (wrong monitor)
-#
-# AFTER:
-#   Active window on DP-1, user focused on HDMI-A-1:
-#   SUPER+SHIFT+2 → moves to HDMI-A-1's slot 2 (focused monitor, correct!)
-#
-# SAFETY GUARD: If the active window is ALREADY on the focused monitor,
-# move to that monitor's slot N (no cross-monitor move). This prevents the
-# "accidentally move window between monitors" case.
+# Example:
+#   Active window on DP-1, keyboard focus on HDMI-A-1:
+#   SUPER+SHIFT+2 → window moves to HDMI-A-1's slot 2 (WS 2)
 #
 # In global workspace mode each monitor owns a dedicated workspace range:
 #   Monitor "eDP-1"  →  base 0   →  workspaces  1-10
@@ -34,12 +26,11 @@ if [[ -z "$SLOT" || ! "$SLOT" =~ ^([1-9]|10)$ ]]; then
   exit 1
 fi
 
-# Get the active window and monitors in one hyprctl call to save latency.
+# Get the active window address.
 active=$(hyprctl activewindow -j 2>/dev/null)
 win_address=$(echo "$active" | jq -r '.address // empty')
-win_monitor_id=$(echo "$active"  | jq -r '.monitor // empty')
 
-if [[ -z "$win_address" || -z "$win_monitor_id" ]]; then
+if [[ -z "$win_address" ]]; then
   exit 0  # no active window; silent no-op
 fi
 
@@ -47,21 +38,10 @@ fi
 monitors_json=$(hyprctl monitors -j 2>/dev/null)
 
 # Find the FOCUSED monitor (where keyboard focus currently is).
+# Target is always the focused monitor — regardless of which monitor the window is on.
+# This ensures SUPER+SHIFT+N always moves to slot N on the monitor the user is using.
 focused_monitor_id=$(echo "$monitors_json" | jq -r '.[] | select(.focused) | .id')
-focused_monitor_name=$(echo "$monitors_json" | jq -r ".[] | select(.id == $focused_monitor_id) | .name")
-
-# SAFETY: Determine the TARGET monitor:
-# - If the active window is ALREADY on the focused monitor, use it (safe move within monitor).
-# - Otherwise, use the focused monitor (user intends slot N on the monitor they're using).
-# This prevents cross-monitor moves from hiding the window.
-if [[ "$win_monitor_id" == "$focused_monitor_id" ]]; then
-  # Window is already on the focused monitor → move to its slot N (expected).
-  target_monitor_name="$focused_monitor_name"
-else
-  # Window is on a different monitor than focus → move to focused monitor's slot N.
-  # This is the FIX for the "window disappears" bug when moving Ixion between monitors.
-  target_monitor_name="$focused_monitor_name"
-fi
+target_monitor_name=$(echo "$monitors_json" | jq -r ".[] | select(.id == $focused_monitor_id) | .name")
 
 # Look up the stable base for the target monitor.
 base=$(omarchy-monitor-base 2>/dev/null | awk -v name="$target_monitor_name" '$1 == name {print $2; exit}')

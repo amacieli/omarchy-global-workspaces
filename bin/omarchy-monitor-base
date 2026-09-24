@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# omarchy:summary=Manage stable monitor→workspace base assignments
+# omarchy:hidden=true
 # omarchy-monitor-base — Stable monitor→base allocator.
 #
 # Usage:

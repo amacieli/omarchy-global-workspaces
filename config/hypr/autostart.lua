@@ -1,6 +1,0 @@
--- Extra autostart processes.
--- o.launch_on_start("my-service")
---
--- NOTE: Workspace materialization was previously here, but has been moved to
--- config/hypr/toggles/workspace-global.lua to ensure it runs after monitor bases
--- are loaded (fixing Issue #1). See that file for details.
