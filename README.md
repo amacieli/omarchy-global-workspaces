@@ -42,8 +42,8 @@ each monitor switches independently.
 |---|---|
 | `~/.local/bin/omarchy-switch-to-aw` | Runtime-aware wrapper: global → global-switch, local → hyprctl workspace |
 | `~/.local/bin/omarchy-move-window-to-aw` | Runtime-aware wrapper: global → global-move-window, local → movetoworkspacesilent |
-| `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Menu entries: Trigger → Toggle → Workspace Mode → Global / Local |
-| `~/.config/hypr/bindings.lua` | Hotkey block: SUPER+1-10 and SUPER+SHIFT+1-10 |
+| `~/.local/bin/omarchy-recover-stranded-windows` | Rescue windows stranded when a monitor disconnects |
+| `~/.config/hypr/bindings.lua` | Hotkey block: SUPER+1-10 and SUPER+SHIFT+1-10 (appended by install.sh) |
 
 ## Install
 
@@ -69,8 +69,8 @@ Or from a terminal:
 
 | Key | Action |
 |---|---|
-| SUPER+1 … SUPER+5 | Switch to Apparent Workspace N (all monitors move together in global mode) |
-| SUPER+SHIFT+1 … SUPER+SHIFT+5 | Move focused window to AW N silently (stays on its current monitor) |
+| SUPER+1 … SUPER+10 | Switch to Apparent Workspace N (all monitors move together in global mode) |
+| SUPER+SHIFT+1 … SUPER+SHIFT+10 | Move focused window to AW N silently (stays on its current monitor) |
 
 Both hotkeys check the toggle flag at the moment the key is pressed — switching
 between global and local mode takes effect immediately with no Hyprland reload.
@@ -129,13 +129,13 @@ omarchy-global-workspaces/
     omarchy-hyprland-workspace-global-move-window  system script
     omarchy-switch-to-aw                           user wrapper (toggle-aware)
     omarchy-move-window-to-aw                      user wrapper (toggle-aware)
+    omarchy-monitor-base                           stable monitor→base allocator
+    omarchy-ensure-workspaces                      workspace materialisation helper
+    omarchy-recover-stranded-windows               rescue windows after monitor disconnect
   shell/
     Workspaces.qml                        bar widget replacement
   hypr/
     toggles/
       workspace-global.lua               Hyprland toggle flag
-    bindings-global-workspaces.lua       hotkey block (appended to user bindings)
-  config/
-    omarchy/extensions/
-      omarchy-menu.jsonc                 menu entries
+    bindings-global-workspaces.lua       hotkey block (appended to user bindings by install.sh)
 ```

@@ -2,14 +2,14 @@
 # install.sh — omarchy-global-workspaces
 #
 # Installs the global workspace switching feature onto a stock Omarchy setup.
-# This mirrors exactly what the PR (omacom/omarchy#12978 @ caff3e03) adds to
-# the main Omarchy tree, for users who want to test it before the PR merges.
+# This mirrors exactly what the PR (omacom/omarchy#12978) adds to the main
+# Omarchy tree, for users who want to test it before the PR merges.
 #
 # Safe to re-run: all steps are idempotent.
 #
-# FILES INSTALLED (matching PR caff3e03):
+# FILES INSTALLED:
 #
-#   default/hypr/toggles/workspace-global.lua
+#   hypr/toggles/workspace-global.lua
 #     → $OMARCHY_PATH/default/hypr/toggles/workspace-global.lua
 #       (enables omarchy-hyprland-toggle workspace-global on|off|toggle)
 #
@@ -31,9 +31,17 @@
 #   bin/omarchy-ensure-workspaces
 #     → ~/.local/bin/omarchy-ensure-workspaces
 #
-#   shell/plugins/bar/widgets/Workspaces.qml
+#   bin/omarchy-recover-stranded-windows
+#     → ~/.local/bin/omarchy-recover-stranded-windows
+#
+#   shell/Workspaces.qml
 #     → $OMARCHY_PATH/shell/plugins/bar/widgets/Workspaces.qml
 #       (global-mode aware bar widget — backed up as Workspaces.qml.bak)
+#
+#   hypr/bindings-global-workspaces.lua (block appended to):
+#     → ~/.config/hypr/bindings.lua
+#       (SUPER+1-10 and SUPER+SHIFT+1-10 routed through omarchy-switch-to-aw
+#        and omarchy-move-window-to-aw; skipped if block is already present)
 #
 # ENABLING GLOBAL MODE (after install):
 #   omarchy-hyprland-toggle workspace-global on
@@ -74,12 +82,12 @@ yellow "Installing toggle module..."
 
 TOGGLES_DIR="$OMARCHY_PATH/default/hypr/toggles"
 if [[ -w "$TOGGLES_DIR" ]]; then
-  install -m 0644 "$REPO_DIR/default/hypr/toggles/workspace-global.lua" \
+  install -m 0644 "$REPO_DIR/hypr/toggles/workspace-global.lua" \
     "$TOGGLES_DIR/workspace-global.lua"
   green "  ✓ $TOGGLES_DIR/workspace-global.lua"
 else
   yellow "  ! $TOGGLES_DIR is not writable — trying sudo..."
-  sudo -S -p '' install -m 0644 "$REPO_DIR/default/hypr/toggles/workspace-global.lua" \
+  sudo install -m 0644 "$REPO_DIR/hypr/toggles/workspace-global.lua" \
     "$TOGGLES_DIR/workspace-global.lua"
   green "  ✓ $TOGGLES_DIR/workspace-global.lua (via sudo)"
 fi
@@ -95,7 +103,8 @@ for script in \
   omarchy-monitor-base \
   omarchy-hyprland-workspace-global-switch \
   omarchy-hyprland-workspace-global-move-window \
-  omarchy-ensure-workspaces
+  omarchy-ensure-workspaces \
+  omarchy-recover-stranded-windows
 do
   install -m 0755 "$REPO_DIR/bin/$script" "$HOME/.local/bin/$script"
   green "  ✓ ~/.local/bin/$script"
@@ -111,15 +120,36 @@ if [[ -f "$WIDGET_FILE" ]]; then
   # Back up the original before overwriting
   if [[ -w "$WIDGET_DIR" ]]; then
     cp "$WIDGET_FILE" "${WIDGET_FILE}.bak"
-    install -m 0644 "$REPO_DIR/shell/plugins/bar/widgets/Workspaces.qml" "$WIDGET_FILE"
+    install -m 0644 "$REPO_DIR/shell/Workspaces.qml" "$WIDGET_FILE"
   else
-    sudo -S -p '' cp "$WIDGET_FILE" "${WIDGET_FILE}.bak"
-    sudo -S -p '' install -m 0644 "$REPO_DIR/shell/plugins/bar/widgets/Workspaces.qml" "$WIDGET_FILE"
+    sudo cp "$WIDGET_FILE" "${WIDGET_FILE}.bak"
+    sudo install -m 0644 "$REPO_DIR/shell/Workspaces.qml" "$WIDGET_FILE"
   fi
   green "  ✓ $WIDGET_FILE (original backed up as Workspaces.qml.bak)"
 else
   yellow "  ! $WIDGET_FILE not found — skipping bar widget install"
-  yellow "    (Omarchy path may differ; copy shell/plugins/bar/widgets/Workspaces.qml manually)"
+  yellow "    (Omarchy path may differ; copy shell/Workspaces.qml manually)"
+fi
+
+# ── Keybindings → ~/.config/hypr/bindings.lua ─────────────────────────────────
+# Without these bindings, SUPER+N calls Hyprland's raw workspace dispatcher,
+# bypassing omarchy-switch-to-aw and breaking global mode silently.
+# The block is appended only once — idempotent via sentinel comment.
+yellow "Installing keybindings..."
+
+BINDINGS_FILE="$HOME/.config/hypr/bindings.lua"
+BINDINGS_SENTINEL="-- ── Global workspace switching"
+BINDINGS_BLOCK="$REPO_DIR/hypr/bindings-global-workspaces.lua"
+
+if [[ ! -f "$BINDINGS_FILE" ]]; then
+  yellow "  ! ~/.config/hypr/bindings.lua not found — skipping auto-install"
+  yellow "    Add the keybindings manually by appending:"
+  yellow "    $BINDINGS_BLOCK"
+elif grep -qF -- "$BINDINGS_SENTINEL" "$BINDINGS_FILE"; then
+  green "  ✓ ~/.config/hypr/bindings.lua (keybindings already present — skipped)"
+else
+  cat "$BINDINGS_BLOCK" >> "$BINDINGS_FILE"
+  green "  ✓ ~/.config/hypr/bindings.lua (keybinding block appended)"
 fi
 
 # ── Ensure ~/.local/bin on PATH ────────────────────────────────────────────────
@@ -156,4 +186,4 @@ info "  omarchy-hyprland-toggle workspace-global off"
 info "  hyprctl reload"
 echo ""
 info "To restore the original bar widget:"
-info "  sudo cp $WIDGET_DIR/Workspaces.qml.bak $WIDGET_DIR/Workspaces.qml"
+info "  sudo cp ${WIDGET_FILE}.bak $WIDGET_FILE"
