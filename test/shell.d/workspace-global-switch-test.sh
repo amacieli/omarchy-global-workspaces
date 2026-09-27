@@ -18,7 +18,7 @@ export HOME="$STATE_DIR"
 DISPATCH_LOG="$STATE_DIR/dispatch.log"
 
 # Helper: write a hyprctl stub that logs dispatch calls and optionally
-# returns a fixed JSON response for 'activeworkspace'.
+# returns a fixed JSON response for 'activeworkspace' and 'monitors -j'.
 # Usage: make_hyprctl_stub [focused_monitor_name|"fail"]
 #   focused_monitor_name  → activeworkspace returns that monitor name
 #   "fail"                → activeworkspace exits 1
@@ -26,6 +26,7 @@ DISPATCH_LOG="$STATE_DIR/dispatch.log"
 make_hyprctl_stub() {
   local focused="${1:-}"
   local stub="$FAKE_BIN/hyprctl"
+  local with_monitors="${2:-false}"
 
   if [[ "$focused" == "fail" ]]; then
     cat > "$stub" <<STUB
@@ -36,7 +37,21 @@ fi
 echo "\$*" >> "$DISPATCH_LOG"
 STUB
   elif [[ -n "$focused" ]]; then
-    cat > "$stub" <<STUB
+    if [[ "$with_monitors" == "true" ]]; then
+      cat > "$stub" <<STUB
+#!/bin/bash
+if [[ "\$1" == "activeworkspace" ]]; then
+  echo '{"id":1,"monitor":"$focused"}'
+  exit 0
+fi
+if [[ "\$1" == "monitors" && "\$2" == "-j" ]]; then
+  echo '[{"name":"eDP-1","id":0},{"name":"HDMI-A-1","id":1},{"name":"DP-1","id":2}]'
+  exit 0
+fi
+echo "\$*" >> "$DISPATCH_LOG"
+STUB
+    else
+      cat > "$stub" <<STUB
 #!/bin/bash
 if [[ "\$1" == "activeworkspace" ]]; then
   echo '{"id":1,"monitor":"$focused"}'
@@ -44,6 +59,7 @@ if [[ "\$1" == "activeworkspace" ]]; then
 fi
 echo "\$*" >> "$DISPATCH_LOG"
 STUB
+    fi
   else
     cat > "$stub" <<STUB
 #!/bin/bash
@@ -95,7 +111,7 @@ JSON
 
 # ── Focused monitor dispatched last ──────────────────────────────────────────
 # eDP-1 (base=0) is focused. Expected dispatch order: HDMI-A-1(12), DP-1(22), eDP-1(2).
-make_hyprctl_stub "eDP-1"
+make_hyprctl_stub "eDP-1" true
 rm -f "$DISPATCH_LOG"
 "$ROOT/bin/omarchy-hyprland-workspace-global-switch" 2 2>/dev/null
 
@@ -121,7 +137,7 @@ $(cat "$DISPATCH_LOG")"
 pass "non-focused monitors dispatched before focused monitor"
 
 # ── Different focused monitor: HDMI-A-1 (base=10) goes last ──────────────────
-make_hyprctl_stub "HDMI-A-1"
+make_hyprctl_stub "HDMI-A-1" true
 rm -f "$DISPATCH_LOG"
 "$ROOT/bin/omarchy-hyprland-workspace-global-switch" 2 2>/dev/null
 
@@ -134,7 +150,7 @@ pass "HDMI-A-1 as focused monitor is dispatched last (workspace 12)"
 # ── Graceful degradation: activeworkspace fails ───────────────────────────────
 # When hyprctl activeworkspace exits non-zero, the focused monitor name is empty.
 # All monitors must still be dispatched (base-ascending order, no abort).
-make_hyprctl_stub "fail"
+make_hyprctl_stub "fail" true
 rm -f "$DISPATCH_LOG"
 "$ROOT/bin/omarchy-hyprland-workspace-global-switch" 2 2>/dev/null
 

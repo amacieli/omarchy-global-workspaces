@@ -144,6 +144,10 @@ LUA
 )
 
 # SUPER+SHIFT+ALT+N must pass --silent to the move wrapper.
+silent_count=$(echo "$silent_output" | grep -c '^SILENT_MOVE|' || true)
+(( silent_count == 10 )) || fail "all 10 SUPER+SHIFT+ALT+N silent-move bindings are captured" "got $silent_count"
+pass "all 10 SUPER+SHIFT+ALT+N bindings are captured by o.bind"
+
 while IFS='|' read -r tag keys action; do
   [[ "$action" == *"--silent"* ]] ||
     fail "SUPER+SHIFT+ALT+N passes --silent to omarchy-move-window-to-aw" \
@@ -152,6 +156,10 @@ done < <(echo "$silent_output" | grep '^SILENT_MOVE|')
 pass "SUPER+SHIFT+ALT+N bindings all pass --silent to omarchy-move-window-to-aw"
 
 # SUPER+SHIFT+N must NOT pass --silent (it should follow the window).
+follow_count=$(echo "$silent_output" | grep -c '^FOLLOW_MOVE|' || true)
+(( follow_count == 10 )) || fail "all 10 SUPER+SHIFT+N follow-move bindings are captured" "got $follow_count"
+pass "all 10 SUPER+SHIFT+N bindings are captured by o.bind"
+
 while IFS='|' read -r tag keys action; do
   [[ "$action" != *"--silent"* ]] ||
     fail "SUPER+SHIFT+N does NOT pass --silent (follow move should follow)" \
