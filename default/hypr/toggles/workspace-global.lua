@@ -312,3 +312,9 @@ if hl.on then
     switch_to_slot(slot)
   end)
 end
+
+-- ── Global-mode keybinding overrides ─────────────────────────────────────────
+-- Rebind SUPER+CTRL+TAB to previous_per_monitor so "Jump to former workspace"
+-- stays on the focused monitor's own history while global mode is active.
+-- In local mode, tiling.lua keeps "previous", which can cross monitors.
+o.rebind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "previous_per_monitor" }))

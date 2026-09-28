@@ -60,7 +60,8 @@ output=$(HOME="$STATE_DIR" "$ROOT/bin/omarchy-move-window-to-aw" 3 2>/dev/null)
 [[ "$output" != *"global-move"* ]] || fail "local mode does not call global-move" "got: $output"
 pass "local mode routes through hyprctl"
 
-# ── Local mode dispatch uses follow=false (silent move) ──────────────────────
+# ── Local mode dispatch uses follow=false for --silent ───────────────────────
+output=$(HOME="$STATE_DIR" "$ROOT/bin/omarchy-move-window-to-aw" --silent 3 2>/dev/null)
 [[ "$output" == *"follow = false"* ]] || fail "local mode passes follow=false for silent move" "got: $output"
 pass "local mode passes follow=false for a silent window move"
 
