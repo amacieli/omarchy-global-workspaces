@@ -35,7 +35,11 @@ o.bind("SUPER + SHIFT + grave", "Move window to scratchpad", hl.dsp.window.move(
 
 o.bind("SUPER + TAB", "Next workspace", hl.dsp.focus({ workspace = "e+1" }))
 o.bind("SUPER + SHIFT + TAB", "Previous workspace", hl.dsp.focus({ workspace = "e-1" }))
-o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "previous" }))
+-- With workspace-global on, stay on the focused monitor's history. Chosen here,
+-- not in the toggle, so personal overrides in hypr/bindings.lua still win.
+local global_workspaces = io.open(require("default.hypr.paths").state_home .. "/omarchy/toggles/hypr/workspace-global.lua", "r")
+if global_workspaces then global_workspaces:close() end
+o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = global_workspaces and "previous_per_monitor" or "previous" }))
 
 o.bind("SUPER + SHIFT + ALT + LEFT", "Move workspace to left monitor", hl.dsp.workspace.move({ monitor = "l" }))
 o.bind("SUPER + SHIFT + ALT + RIGHT", "Move workspace to right monitor", hl.dsp.workspace.move({ monitor = "r" }))
