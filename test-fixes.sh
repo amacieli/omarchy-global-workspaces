@@ -40,17 +40,24 @@ test_result() {
 
 # Setup test environment
 setup_test_env() {
-  export TEST_STATE_DIR="/tmp/omarchy-test-state"
-  rm -rf "$TEST_STATE_DIR"
-  mkdir -p "$TEST_STATE_DIR/omarchy/toggles/hypr"
+  # Use PID-based unique directories to avoid collisions with unrelated test runs
+  local pid=$$
+  export TEST_STATE_DIR="/tmp/omarchy-test-state-${pid}"
+  export TEST_HOME="/tmp/omarchy-test-home-${pid}"
+  export TEST_RUN_MARKER="/tmp/omarchy-test-run-${pid}.marker"
   
-  # Patch scripts to use test state dir
-  export HOME="/tmp/omarchy-test-home"
-  mkdir -p "$HOME/.local/state/omarchy"
+  mkdir -p "$TEST_STATE_DIR/omarchy/toggles/hypr"
+  mkdir -p "$TEST_HOME/.local/state/omarchy"
+  
+  # Mark that this PID created these directories (prevents cleanup of pre-existing data)
+  touch "$TEST_RUN_MARKER"
 }
 
 cleanup_test_env() {
-  rm -rf "$TEST_STATE_DIR" "$HOME"
+  # Only cleanup if we created them in this run (check for marker file)
+  if [[ -f "$TEST_RUN_MARKER" ]]; then
+    rm -rf "$TEST_STATE_DIR" "$TEST_HOME" "$TEST_RUN_MARKER"
+  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -64,7 +71,7 @@ test_p1_1_state_path_default() {
   export XDG_STATE_HOME="/custom/state"
   
   # Check if the script respects XDG_STATE_HOME
-  local script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-switch-to-aw"
+  local script="$REPO_ROOT/bin/omarchy-switch-to-aw"
   if grep -q '\${XDG_STATE_HOME:-\$HOME/.local/state}' "$script"; then
     test_result "$test_name" "PASS"
   else
@@ -78,7 +85,7 @@ test_p1_1_state_path_fallback() {
   # Test fallback when XDG_STATE_HOME is unset
   unset XDG_STATE_HOME
   
-  local script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-switch-to-aw"
+  local script="$REPO_ROOT/bin/omarchy-switch-to-aw"
   if grep -q '\${XDG_STATE_HOME:-\$HOME/.local/state}' "$script"; then
     test_result "$test_name" "PASS"
   else
@@ -89,7 +96,7 @@ test_p1_1_state_path_fallback() {
 test_p1_1_lua_consistency() {
   local test_name="P1.1c: workspace-global.lua uses consistent state path"
   
-  local lua_script="/mnt/ai/projects/omarchy-global-workspaces/default/hypr/toggles/workspace-global.lua"
+  local lua_script="$REPO_ROOT/default/hypr/toggles/workspace-global.lua"
   
   # Check that Lua reads from the same place (pattern spans lines)
   if grep -A1 'local BASES_FILE' "$lua_script" | grep -q '\.local/state'; then
@@ -106,7 +113,7 @@ test_p1_1_lua_consistency() {
 test_p1_2_atomic_write_write_bases() {
   local test_name="P1.2a: write_bases() uses atomic temp-file + rename"
   
-  local script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-monitor-base"
+  local script="$REPO_ROOT/bin/omarchy-monitor-base"
   
   # Check for tempfile.mkstemp
   if grep -q 'tempfile.mkstemp' "$script"; then
@@ -124,7 +131,7 @@ test_p1_2_atomic_write_write_bases() {
 test_p1_2_atomic_write_allocate_bases() {
   local test_name="P1.2b: allocate_bases() uses atomic temp-file + rename"
   
-  local script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-monitor-base"
+  local script="$REPO_ROOT/bin/omarchy-monitor-base"
   
   # Count occurrences of mkstemp (should have at least 2, one per function)
   local mkstemp_count=$(grep -c 'tempfile.mkstemp' "$script")
@@ -138,7 +145,7 @@ test_p1_2_atomic_write_allocate_bases() {
 test_p1_2_atomic_write_fsync() {
   local test_name="P1.2c: Atomic write includes fsync() for durability"
   
-  local script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-monitor-base"
+  local script="$REPO_ROOT/bin/omarchy-monitor-base"
   
   # Check for fsync call
   if grep -q 'os.fsync' "$script"; then
@@ -155,7 +162,7 @@ test_p1_2_atomic_write_fsync() {
 test_p1_3_no_background_sync() {
   local test_name="P1.3: workspace-global.lua removes background omarchy-monitor-base sync"
   
-  local lua_script="/mnt/ai/projects/omarchy-global-workspaces/default/hypr/toggles/workspace-global.lua"
+  local lua_script="$REPO_ROOT/default/hypr/toggles/workspace-global.lua"
   
   # Check that after save_bases, we don't call omarchy-monitor-base sync in executable code
   # Extract just the if changed block and look for the pattern in non-comment lines
@@ -169,7 +176,7 @@ test_p1_3_no_background_sync() {
 test_p1_3_sync_call_removed() {
   local test_name="P1.3b: Verify pcall(omarchy-monitor-base sync) is gone"
   
-  local lua_script="/mnt/ai/projects/omarchy-global-workspaces/default/hypr/toggles/workspace-global.lua"
+  local lua_script="$REPO_ROOT/default/hypr/toggles/workspace-global.lua"
   
   # Search for the problematic background call anywhere in the file
   # (allow it in comments, but not in executable code)
@@ -189,7 +196,7 @@ test_p1_3_sync_call_removed() {
 test_p2_timer_present() {
   local test_name="P2: Workspaces widget has periodic re-probe timer"
   
-  local qml_file="/mnt/ai/projects/omarchy-global-workspaces/shell/plugins/bar/widgets/Workspaces.qml"
+  local qml_file="$REPO_ROOT/shell/plugins/bar/widgets/Workspaces.qml"
   
   # Check for Timer element
   if grep -q 'Timer {' "$qml_file"; then
@@ -202,7 +209,7 @@ test_p2_timer_present() {
 test_p2_timer_interval() {
   local test_name="P2b: Re-probe timer has reasonable interval"
   
-  local qml_file="/mnt/ai/projects/omarchy-global-workspaces/shell/plugins/bar/widgets/Workspaces.qml"
+  local qml_file="$REPO_ROOT/shell/plugins/bar/widgets/Workspaces.qml"
   
   # Check for interval setting (should be 2000ms)
   if grep -q 'interval:.*[0-9]*' "$qml_file" && grep -B2 -A2 'Timer {' "$qml_file" | grep -q 'interval:'; then
@@ -215,7 +222,7 @@ test_p2_timer_interval() {
 test_p2_timer_triggers_probe() {
   local test_name="P2c: Re-probe timer triggers globalFlagProbe"
   
-  local qml_file="/mnt/ai/projects/omarchy-global-workspaces/shell/plugins/bar/widgets/Workspaces.qml"
+  local qml_file="$REPO_ROOT/shell/plugins/bar/widgets/Workspaces.qml"
   
   # Check that onTriggered calls globalFlagProbe.running = true
   if grep -A5 'interval:.*2000' "$qml_file" | grep -q 'onTriggered.*globalFlagProbe.running'; then
@@ -232,7 +239,7 @@ test_p2_timer_triggers_probe() {
 test_script_syntax() {
   local test_name="Integration: Shell scripts have valid syntax"
   
-  local bash_script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-switch-to-aw"
+  local bash_script="$REPO_ROOT/bin/omarchy-switch-to-aw"
   
   if bash -n "$bash_script" 2>/dev/null; then
     test_result "$test_name" "PASS"
@@ -244,7 +251,7 @@ test_script_syntax() {
 test_python_syntax() {
   local test_name="Integration: Python code in omarchy-monitor-base is valid"
   
-  local bash_script="/mnt/ai/projects/omarchy-global-workspaces/bin/omarchy-monitor-base"
+  local bash_script="$REPO_ROOT/bin/omarchy-monitor-base"
   
   # Extract and validate Python code from the script
   if python3 -c "import json, sys, os, tempfile; print('OK')" 2>/dev/null | grep -q OK; then
@@ -263,6 +270,14 @@ main() {
   echo "║   Global Workspaces Fixes Test Suite (P1 + P2)                    ║"
   echo "╚════════════════════════════════════════════════════════════════════╝"
   echo ""
+  
+  # Auto-detect repository root
+  REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ ! -f "$REPO_ROOT/bin/omarchy-monitor-base" ]]; then
+    echo "ERROR: Could not detect repository root. Expected bin/omarchy-monitor-base in $REPO_ROOT" >&2
+    echo "Run this test from the repository root directory." >&2
+    exit 1
+  fi
   
   setup_test_env
   
