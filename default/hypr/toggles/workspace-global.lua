@@ -136,9 +136,11 @@ local function rebuild_monitor_list()
   if changed then
     -- Write synchronously (pure Lua, no subprocess).
     save_bases(bases)
-    -- Also background the Python script so it can do any additional bookkeeping
-    -- (it is a no-op when the JSON is already up to date).
-    pcall(function() os.execute("omarchy-monitor-base sync &>/dev/null &") end)
+    -- Note: We do NOT background omarchy-monitor-base sync here.
+    -- The synchronous Lua write is authoritative. The Python script would
+    -- re-read our file and potentially overwrite new allocations with a stale
+    -- in-memory copy if another monitor hotplugs before the background process
+    -- completes. Omit the subprocess; let allocations happen on-demand.
   end
 
   _G.omarchy_monitor_bases = bases

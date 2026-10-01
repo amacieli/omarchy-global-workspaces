@@ -41,7 +41,7 @@ for name, base in sorted(data.items(), key=lambda x: x[1]):
 write_bases() {
   # Reads "name base\n" lines from stdin, merges with existing, writes file.
   python3 - "$BASES_FILE" <<'PYEOF'
-import json, sys, os
+import json, sys, os, tempfile
 
 bases_file = sys.argv[1]
 existing = {}
@@ -63,8 +63,23 @@ for line in sys.stdin:
 merged = {**new_entries, **existing}  # existing wins
 
 os.makedirs(os.path.dirname(bases_file), exist_ok=True)
-with open(bases_file, 'w') as f:
-    json.dump(merged, f, indent=2, sort_keys=True)
+# Write to temporary file first, then atomic rename
+temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(bases_file), prefix=".bases.")
+try:
+    with os.fdopen(temp_fd, 'w') as f:
+        json.dump(merged, f, indent=2, sort_keys=True)
+    os.fsync(temp_fd) if hasattr(os, 'fsync') else None
+    os.rename(temp_path, bases_file)
+except Exception:
+    try:
+        os.close(temp_fd)
+    except Exception:
+        pass
+    try:
+        os.unlink(temp_path)
+    except Exception:
+        pass
+    raise
 PYEOF
 }
 
@@ -73,7 +88,7 @@ allocate_bases() {
   # with new bases allocated for any names not yet in the file.
   # Usage: allocate_bases name1 name2 ...
   python3 - "$BASES_FILE" "$@" << 'PYEOF'
-import json, sys, os
+import json, sys, os, tempfile
 
 bases_file = sys.argv[1]
 names = sys.argv[2:]  # monitor names passed as arguments, not stdin
@@ -100,8 +115,23 @@ for name in names:
         next_base += 10
 
 os.makedirs(os.path.dirname(bases_file), exist_ok=True)
-with open(bases_file, 'w') as f:
-    json.dump(result, f, indent=2, sort_keys=True)
+# Write to temporary file first, then atomic rename
+temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(bases_file), prefix=".bases.")
+try:
+    with os.fdopen(temp_fd, 'w') as f:
+        json.dump(result, f, indent=2, sort_keys=True)
+    os.fsync(temp_fd) if hasattr(os, 'fsync') else None
+    os.rename(temp_path, bases_file)
+except Exception:
+    try:
+        os.close(temp_fd)
+    except Exception:
+        pass
+    try:
+        os.unlink(temp_path)
+    except Exception:
+        pass
+    raise
 
 # Output all name→base pairs for currently connected monitors
 for name in names:

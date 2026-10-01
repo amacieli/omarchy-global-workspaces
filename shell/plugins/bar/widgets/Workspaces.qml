@@ -39,6 +39,17 @@ BarWidget {
     onFileChanged: globalFlagProbe.running = true
   }
 
+  // Periodic re-probe timer: FileView.watchChanges can miss events after rapid
+  // changes (documented in Bar.qml). Without this fallback, the widget can show
+  // the wrong slots until the shell restarts. Re-run the probe every 2 seconds
+  // to catch any state drift.
+  Timer {
+    interval: 2000
+    running: true
+    repeat: true
+    onTriggered: globalFlagProbe.running = true
+  }
+
   // ── Slot/ID mapping helpers ───────────────────────────────────────────────
   // In local mode (globalModeActive == false):
   //   slot == raw workspace ID (IDs 1–10, one set per machine).
