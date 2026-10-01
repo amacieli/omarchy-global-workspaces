@@ -68,6 +68,8 @@ temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(bases_file), prefix=".
 try:
     with os.fdopen(temp_fd, 'w') as f:
         json.dump(merged, f, indent=2, sort_keys=True)
+        # Flush Python buffer to kernel before syncing
+        f.flush()
         # Fsync while FD is still open (inside with block)
         if hasattr(os, 'fsync'):
             os.fsync(f.fileno())
@@ -122,6 +124,8 @@ temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(bases_file), prefix=".
 try:
     with os.fdopen(temp_fd, 'w') as f:
         json.dump(result, f, indent=2, sort_keys=True)
+        # Flush Python buffer to kernel before syncing
+        f.flush()
         # Fsync while FD is still open (inside with block)
         if hasattr(os, 'fsync'):
             os.fsync(f.fileno())
