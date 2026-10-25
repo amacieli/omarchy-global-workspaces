@@ -1,0 +1,82 @@
+{
+ "label": "before",
+ "monitors": [
+  {
+   "name": "HDMI-A-1",
+   "id": 0,
+   "active": 1,
+   "focused": true
+  },
+  {
+   "name": "DP-1",
+   "id": 1,
+   "active": 5,
+   "focused": false
+  },
+  {
+   "name": "DP-2",
+   "id": 2,
+   "active": 21,
+   "focused": false
+  }
+ ],
+ "workspaces": [
+  [
+   1,
+   "HDMI-A-1",
+   3
+  ],
+  [
+   5,
+   "DP-1",
+   1
+  ],
+  [
+   21,
+   "DP-2",
+   1
+  ]
+ ],
+ "clients": [
+  {
+   "addr": "0x558a9dca4e90",
+   "ws": 1,
+   "mon": 0,
+   "cls": "foot",
+   "fs": 0,
+   "title": "adam@SCREAMER:/run/media/adam/"
+  },
+  {
+   "addr": "0x558a9ddce990",
+   "ws": 1,
+   "mon": 0,
+   "cls": "foot",
+   "fs": 0,
+   "title": "adam@SCREAMER:/run/media/adam"
+  },
+  {
+   "addr": "0x558a9dcc21d0",
+   "ws": 5,
+   "mon": 1,
+   "cls": "org.quickshell",
+   "fs": 0,
+   "title": "OmaLook"
+  },
+  {
+   "addr": "0x558a9c33e990",
+   "ws": 1,
+   "mon": 0,
+   "cls": "TUI.tile",
+   "fs": 0,
+   "title": "\u23f3 Migrate global workspaces t\u2026"
+  },
+  {
+   "addr": "0x558a9dd03500",
+   "ws": 21,
+   "mon": 2,
+   "cls": "vivaldi-stable",
+   "fs": 0,
+   "title": "So I've Been Using Omarchy for"
+  }
+ ]
+}

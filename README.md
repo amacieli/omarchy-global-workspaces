@@ -92,3 +92,7 @@ omarchy plugin validate .
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## Known issues
+
+See [docs/investigations/2026-10-25-repeat-press-shuffle.md](docs/investigations/2026-10-25-repeat-press-shuffle.md): repeated `SUPER+N` can leave monitors on the wrong slots because empty workspaces are created on the focused monitor and persistence is not taking effect. Not yet fixed.
