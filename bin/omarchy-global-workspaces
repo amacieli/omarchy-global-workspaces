@@ -1,0 +1,59 @@
+#!/bin/bash
+# omarchy-global-workspaces — turn global workspace mode on or off.
+#
+# Usage: omarchy-global-workspaces <on|off|toggle|status>
+#
+# Global mode is a Hyprland config flag: a Lua file in
+# ~/.local/state/omarchy/toggles/hypr/, which Omarchy's toggles.lua loads after
+# the default and user bindings. "on" installs hypr/workspace-global.lua from
+# this plugin there (pointing its keybindings at this checkout's bin/), "off"
+# removes it, and both reload Hyprland so the bindings take effect.
+#
+# Environment:
+#   XDG_STATE_HOME       state root (default ~/.local/state)
+#   GWS_NO_RELOAD=1      skip `hyprctl reload` (used by the tests)
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: omarchy-global-workspaces <on|off|toggle|status>" >&2
+}
+
+ROOT=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
+TEMPLATE="$ROOT/hypr/workspace-global.lua"
+FLAG_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/toggles/hypr/workspace-global.lua"
+
+is_on() { [[ -f $FLAG_FILE ]]; }
+
+reload() {
+  [[ ${GWS_NO_RELOAD:-} == 1 ]] && return 0
+  command -v hyprctl >/dev/null && hyprctl reload >/dev/null
+}
+
+turn_on() {
+  [[ -f $TEMPLATE ]] || { echo "template not found: $TEMPLATE" >&2; exit 1; }
+  mkdir -p "$(dirname -- "$FLAG_FILE")"
+  # Write beside the target and rename, so a reload never reads a partial file.
+  local tmp="$FLAG_FILE.tmp.$$"
+  ROOT="$ROOT" python3 -c '
+import os, sys
+sys.stdout.write(sys.stdin.read().replace("@PLUGIN_DIR@", os.environ["ROOT"]))
+' <"$TEMPLATE" >"$tmp"
+  mv -f -- "$tmp" "$FLAG_FILE"
+  reload
+}
+
+turn_off() {
+  rm -f -- "$FLAG_FILE"
+  reload
+}
+
+case "${1:-}" in
+  on) turn_on; echo on ;;
+  off) turn_off; echo off ;;
+  toggle)
+    if is_on; then turn_off; echo off; else turn_on; echo on; fi
+    ;;
+  status) is_on && echo on || echo off ;;
+  *) usage; exit 1 ;;
+esac
