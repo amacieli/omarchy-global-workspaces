@@ -1,161 +1,101 @@
 #!/bin/bash
 # Tests for omarchy-hyprland-workspace-global-switch — run without a compositor.
-# Exercises slot validation, fallback behaviour, and focused-monitor-last ordering.
+# hyprctl is stubbed with a fixed monitor snapshot; dispatches are logged.
 
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
-# ── Scratch environment ────────────────────────────────────────────────────────
 FAKE_BIN=$(mktemp -d)
 STATE_DIR=$(mktemp -d)
 trap 'rm -rf "$FAKE_BIN" "$STATE_DIR"' EXIT
 
-BASES_FILE="$STATE_DIR/.local/state/omarchy/monitor-bases.json"
-mkdir -p "$(dirname "$BASES_FILE")"
 export HOME="$STATE_DIR"
-
+export XDG_STATE_HOME="$STATE_DIR/.local/state"
+BASES_FILE="$XDG_STATE_HOME/omarchy/monitor-bases.json"
+mkdir -p "$(dirname "$BASES_FILE")"
 DISPATCH_LOG="$STATE_DIR/dispatch.log"
+SWITCH="$ROOT/bin/omarchy-hyprland-workspace-global-switch"
 
-# Helper: write a hyprctl stub that logs dispatch calls and optionally
-# returns a fixed JSON response for 'activeworkspace' and 'monitors -j'.
-# Usage: make_hyprctl_stub [focused_monitor_name|"fail"]
-#   focused_monitor_name  → activeworkspace returns that monitor name
-#   "fail"                → activeworkspace exits 1
-#   (omitted)             → activeworkspace returns empty monitor name
+# make_hyprctl_stub <focused> <ws-eDP> <ws-HDMI> <ws-DP1> [apply]
+# Monitors: eDP-1 (id0) HDMI-A-1 (id1) DP-1 (id2), each on the given workspace id.
+# With "apply", dispatching `focus({ workspace = "N" })` moves the monitor whose
+# range owns N (as the real hook would); otherwise the snapshot never changes.
 make_hyprctl_stub() {
-  local focused="${1:-}"
-  local stub="$FAKE_BIN/hyprctl"
-  local with_monitors="${2:-false}"
-
-  if [[ "$focused" == "fail" ]]; then
-    cat > "$stub" <<STUB
+  local focused="$1" w0="$2" w1="$3" w2="$4"
+  cat > "$FAKE_BIN/hyprctl" <<STUB
 #!/bin/bash
-if [[ "\$1" == "activeworkspace" ]]; then
-  exit 1
-fi
-echo "\$*" >> "$DISPATCH_LOG"
-STUB
-  elif [[ -n "$focused" ]]; then
-    if [[ "$with_monitors" == "true" ]]; then
-      cat > "$stub" <<STUB
-#!/bin/bash
-if [[ "\$1" == "activeworkspace" ]]; then
-  echo '{"id":1,"monitor":"$focused"}'
-  exit 0
-fi
 if [[ "\$1" == "monitors" && "\$2" == "-j" ]]; then
-  echo '[{"name":"eDP-1","id":0},{"name":"HDMI-A-1","id":1},{"name":"DP-1","id":2}]'
+  python3 - <<PY
+import json
+f="$focused"
+print(json.dumps([
+ {"name":"eDP-1","id":0,"focused":f=="eDP-1","activeWorkspace":{"id":$w0}},
+ {"name":"HDMI-A-1","id":1,"focused":f=="HDMI-A-1","activeWorkspace":{"id":$w1}},
+ {"name":"DP-1","id":2,"focused":f=="DP-1","activeWorkspace":{"id":$w2}}]))
+PY
   exit 0
 fi
 echo "\$*" >> "$DISPATCH_LOG"
 STUB
-    else
-      cat > "$stub" <<STUB
-#!/bin/bash
-if [[ "\$1" == "activeworkspace" ]]; then
-  echo '{"id":1,"monitor":"$focused"}'
-  exit 0
-fi
-echo "\$*" >> "$DISPATCH_LOG"
-STUB
-    fi
-  else
-    cat > "$stub" <<STUB
-#!/bin/bash
-echo "\$*" >> "$DISPATCH_LOG"
-STUB
-  fi
-  chmod +x "$stub"
+  chmod +x "$FAKE_BIN/hyprctl"
 }
 
-export PATH="$FAKE_BIN:$ROOT/bin:$PATH"
+export PATH="$FAKE_BIN:$PATH"
 
 # ── Slot validation ───────────────────────────────────────────────────────────
-make_hyprctl_stub
-status=0
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" 0 2>/dev/null || status=$?
-(( status != 0 )) || fail "slot 0 is rejected"
-pass "slot 0 is rejected"
-
-status=0
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" 11 2>/dev/null || status=$?
-(( status != 0 )) || fail "slot 11 is rejected"
-pass "slot 11 is rejected"
-
-status=0
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" "" 2>/dev/null || status=$?
-(( status != 0 )) || fail "empty slot is rejected"
-pass "empty slot is rejected"
+make_hyprctl_stub eDP-1 1 11 21
+for bad in 0 11 ""; do
+  status=0
+  "$SWITCH" "$bad" 2>/dev/null || status=$?
+  (( status != 0 )) || fail "slot '$bad' is rejected"
+  pass "slot '$bad' is rejected"
+done
 
 # ── No bases file → raw slot fallback ────────────────────────────────────────
-# No monitor-bases.json exists yet; should fall back to a raw hyprctl dispatch.
-make_hyprctl_stub
 rm -f "$DISPATCH_LOG"
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" 3 2>/dev/null || true
-log=$(cat "$DISPATCH_LOG" 2>/dev/null || true)
-[[ "$log" == *'workspace = "3"'* ]] || fail "no bases file falls back to raw slot dispatch" "got: $log"
+"$SWITCH" 3 2>/dev/null || true
+grep -q 'workspace = "3"' "$DISPATCH_LOG" || fail "no bases file falls back to raw slot dispatch"
 pass "no bases file falls back to raw slot dispatch"
 
-# ── Setup: bases file with three monitors ────────────────────────────────────
-# eDP-1    base=0  → slot 2 = workspace 2  (will be set as focused)
-# HDMI-A-1 base=10 → slot 2 = workspace 12
-# DP-1     base=20 → slot 2 = workspace 22
-cat > "$BASES_FILE" << 'JSON'
-{
-  "DP-1": 20,
-  "HDMI-A-1": 10,
-  "eDP-1": 0
-}
+cat > "$BASES_FILE" <<'JSON'
+{ "DP-1": 20, "HDMI-A-1": 10, "eDP-1": 0 }
 JSON
 
-# ── Focused monitor dispatched last ──────────────────────────────────────────
-# eDP-1 (base=0) is focused. Expected dispatch order: HDMI-A-1(12), DP-1(22), eDP-1(2).
-make_hyprctl_stub "eDP-1" true
+# ── Hook already synced everything (focused = HDMI-A-1): exactly one dispatch ─────
+make_hyprctl_stub HDMI-A-1 2 12 22
 rm -f "$DISPATCH_LOG"
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" 2 2>/dev/null
+"$SWITCH" 2 2>/dev/null || true
+[[ $(wc -l < "$DISPATCH_LOG") == 1 ]] || fail "normal path is a single dispatch" "$(cat "$DISPATCH_LOG")"
+grep -q 'workspace = "12"' "$DISPATCH_LOG" || fail "single dispatch targets focused monitor's base+slot" "$(cat "$DISPATCH_LOG")"
+pass "no per-monitor fan-out: one dispatch for the focused monitor (workspace 12)"
 
-# Last dispatch must be eDP-1's workspace (base 0 + slot 2 = 2).
-last_ws=$(grep 'workspace' "$DISPATCH_LOG" | tail -1 | grep -o '"[0-9]*"' | tr -d '"' || true)
-[[ "$last_ws" == "2" ]] || fail "focused monitor (eDP-1, base=0) is dispatched last" \
-  "last workspace dispatched: $last_ws; full log:
-$(cat "$DISPATCH_LOG")"
-pass "focused monitor is dispatched last"
-
-# All three monitors receive a dispatch.
-dispatch_count=$(grep -c 'workspace' "$DISPATCH_LOG" || true)
-(( dispatch_count == 3 )) || fail "all three monitors are dispatched" \
-  "count: $dispatch_count, log:
-$(cat "$DISPATCH_LOG")"
-pass "all three monitors receive a dispatch"
-
-# Non-focused monitors appear before the focused one.
-first_ws=$(grep 'workspace' "$DISPATCH_LOG" | head -1 | grep -o '"[0-9]*"' | tr -d '"' || true)
-[[ "$first_ws" != "2" ]] || fail "non-focused monitor dispatched before focused monitor" \
-  "first workspace dispatched was eDP-1's (2); full log:
-$(cat "$DISPATCH_LOG")"
-pass "non-focused monitors dispatched before focused monitor"
-
-# ── Different focused monitor: HDMI-A-1 (base=10) goes last ──────────────────
-make_hyprctl_stub "HDMI-A-1" true
+# ── Hook did its job (others already on slot 2 after the dispatch): no heal ──
+make_hyprctl_stub eDP-1 2 12 22
 rm -f "$DISPATCH_LOG"
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" 2 2>/dev/null
+"$SWITCH" 2 2>/dev/null || true
+[[ $(wc -l < "$DISPATCH_LOG") == 1 ]] || fail "synced monitors are not touched" "$(cat "$DISPATCH_LOG")"
+pass "monitors already on the target slot are skipped"
 
-last_ws=$(grep 'workspace' "$DISPATCH_LOG" | tail -1 | grep -o '"[0-9]*"' | tr -d '"' || true)
-[[ "$last_ws" == "12" ]] || fail "focused monitor (HDMI-A-1, base=10) is dispatched last" \
-  "last workspace: $last_ws; log:
-$(cat "$DISPATCH_LOG")"
-pass "HDMI-A-1 as focused monitor is dispatched last (workspace 12)"
-
-# ── Graceful degradation: activeworkspace fails ───────────────────────────────
-# When hyprctl activeworkspace exits non-zero, the focused monitor name is empty.
-# All monitors must still be dispatched (base-ascending order, no abort).
-make_hyprctl_stub "fail" true
+# ── Out-of-sync monitor is healed: monitor focused first, then workspace ─────
+# Snapshot never changes, so after the first dispatch DP-1 (21) is still off
+# slot 3 → heal DP-1 (monitor first), then restore eDP-1.
+make_hyprctl_stub eDP-1 3 13 21
 rm -f "$DISPATCH_LOG"
-"$ROOT/bin/omarchy-hyprland-workspace-global-switch" 2 2>/dev/null
+"$SWITCH" 3 2>/dev/null || true
+mapfile -t lines < "$DISPATCH_LOG"
+[[ ${lines[0]} == *'workspace = "3"'* ]]   || fail "heal: primary dispatch first" "$(cat "$DISPATCH_LOG")"
+[[ ${lines[1]} == *'monitor = "DP-1"'* ]]  || fail "heal: lagging monitor focused before its workspace" "$(cat "$DISPATCH_LOG")"
+[[ ${lines[2]} == *'workspace = "23"'* ]]  || fail "heal: lagging monitor dispatched to base+slot" "$(cat "$DISPATCH_LOG")"
+[[ ${lines[-1]} == *'monitor = "eDP-1"'* ]] || fail "heal: originating monitor refocused last" "$(cat "$DISPATCH_LOG")"
+pass "lagging monitor healed monitor-first, originating monitor restored last"
 
-dispatch_count=$(grep -c 'workspace' "$DISPATCH_LOG" || true)
-(( dispatch_count == 3 )) || fail "all monitors dispatched when activeworkspace fails" \
-  "count: $dispatch_count, log:
-$(cat "$DISPATCH_LOG")"
-pass "all monitors dispatched when activeworkspace fails (graceful degradation)"
+# ── Focused monitor not in bases → raw fallback ──────────────────────────────
+cat > "$BASES_FILE" <<'JSON'
+{ "DP-1": 20, "HDMI-A-1": 10 }
+JSON
+make_hyprctl_stub eDP-1 1 11 21
+rm -f "$DISPATCH_LOG"
+"$SWITCH" 4 2>/dev/null || true
+grep -q 'workspace = "4"' "$DISPATCH_LOG" || fail "unknown focused monitor falls back to raw slot"
+pass "unknown focused monitor falls back to raw slot"

@@ -18,9 +18,10 @@
 #     Moves the window to raw workspace N silently (no focus change).
 #     Mirrors Hyprland's default moveToWorkspacesilent dispatcher.
 
-# Resolve sibling helpers from this plugin even when bin/ is not on PATH.
-# Appended, so a same-named command earlier on PATH still wins.
-PATH="$PATH:$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+# Call this plugin's own helpers by absolute path. They must NOT be looked up on
+# PATH: Omarchy ships same-named helpers in /usr/share/omarchy/bin, and an older
+# copy there would silently win. GWS_BIN overrides the directory (used by tests).
+GWS_BIN="${GWS_BIN:-$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")}"
 
 SILENT=false
 if [[ "${1:-}" == "--silent" ]]; then
@@ -37,7 +38,7 @@ fi
 GLOBAL_FLAG="$HOME/.local/state/omarchy/toggles/hypr/workspace-global.lua"
 
 if [[ -f "$GLOBAL_FLAG" ]]; then
-  exec omarchy-hyprland-workspace-global-move-window "$SLOT"
+  exec "$GWS_BIN/omarchy-hyprland-workspace-global-move-window" "$SLOT"
 else
   if [[ "$SILENT" == true ]]; then
     # Silent move: no focus or display change (matches SUPER+SHIFT+ALT+N intent)

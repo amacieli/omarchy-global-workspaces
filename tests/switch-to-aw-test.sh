@@ -30,6 +30,7 @@ STUB
 chmod +x "$FAKE_BIN/hyprctl"
 
 export PATH="$FAKE_BIN:$ROOT/bin:$PATH"
+export GWS_BIN="$FAKE_BIN"  # helpers are called by absolute path, not PATH
 
 # ── Slot validation ───────────────────────────────────────────────────────────
 status=0

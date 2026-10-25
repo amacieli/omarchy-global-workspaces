@@ -88,3 +88,21 @@ Hand-run dispatches (state restored afterwards):
 
 Snapshot `hyprctl monitors/workspaces/clients -j` first. Restore by focusing the
 original workspaces, focused monitor last. Never use anything that closes windows.
+
+## Follow-up (2026-10-25): fixes applied
+
+- **Persistence (step 1):** `hyprctl eval 'hl.workspace_rule({ workspace = "91", monitor = "DP-1", persistent = true })'`
+  on 0.56.2 works as documented: `workspacerules -j` then shows `monitor` and
+  `persistent`, and workspace 91 appears with `ispersistent: true`. The call shape
+  in `hypr/workspace-global.lua` is therefore correct. The missing rules on the
+  live system came from the stale installed toggle (rules for 21/2/30 are
+  unrelated), not an API problem. After `omarchy-global-workspaces on`, confirm
+  with `hyprctl workspacerules -j` (expect 10 rules per connected monitor).
+  Note: the test rule for ws 91 persists until the next config reload.
+- **Switch (step 2):** `omarchy-hyprland-workspace-global-switch` now issues one
+  dispatch (focused monitor's base+slot); the `workspace.active` hook syncs the
+  rest. A heal pass fixes monitors still off-slot, monitor-focus first.
+- **PATH shadowing:** `omarchy-switch-to-aw` / `omarchy-move-window-to-aw` call
+  their helpers by absolute path (`GWS_BIN` overrides, for tests).
+- **autostart.lua:** the 1..30 focus loop was removed from the user config
+  (backup: `~/.config/hypr/autostart.lua.bak-gws-20261025`).

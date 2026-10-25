@@ -152,6 +152,7 @@ STUB
 chmod +x "$FAKE_BIN/hyprctl"
 
 export PATH="$FAKE_BIN:$ROOT/bin:$PATH"
+export GWS_BIN="$FAKE_BIN"
 
 # Global mode: switch routes to omarchy-hyprland-workspace-global-switch.
 mkdir -p "$(dirname "$GLOBAL_FLAG")" && touch "$GLOBAL_FLAG"
