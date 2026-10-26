@@ -106,8 +106,11 @@ BarWidget {
     for (var i = 0; i < values.length; i++) {
       var id = values[i].id
       var slot = slotOfId(id)
-      // Include any occupied slot in range 1–10 (works for both modes).
-      if (slot >= 1 && slot <= 10 && slots.indexOf(slot) === -1) slots.push(slot)
+      // Slots 1–5 are always shown. Beyond that, show a slot only while it is
+      // occupied or focused: persistent (empty) workspaces exist for all ten
+      // slots, so existence alone must not make a slot appear.
+      if (slot > 5 && slot <= 10 && slots.indexOf(slot) === -1
+          && (root.slotOccupied(slot) || root.slotFocused(slot))) slots.push(slot)
     }
 
     slots.sort(function(left, right) { return left - right })
