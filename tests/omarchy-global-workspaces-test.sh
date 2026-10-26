@@ -44,3 +44,17 @@ ln -s "$CLI" "$STATE/gws"
 "$STATE/gws" on >/dev/null
 grep -qF "local PLUGIN_DIR = \"$ROOT\"" "$FLAG" || fail "symlinked invocation resolves the plugin root"
 pass "symlinked invocation resolves the plugin root"
+
+# ── Modes: local / global / persisted ────────────────────────────────────────
+PFLAG="$XDG_STATE_HOME/omarchy/global-workspaces/persisted"
+"$CLI" off >/dev/null
+[[ $("$CLI" mode) == local ]] || fail "mode is local when off"
+"$CLI" on >/dev/null
+[[ $("$CLI" mode) == global && ! -f $PFLAG ]] || fail "on gives plain global mode"
+[[ $("$CLI" persisted) == persisted && -f $PFLAG && -f $FLAG ]] || fail "persisted installs toggle and persisted flag"
+[[ $("$CLI" mode) == persisted && $("$CLI" status) == on ]] || fail "persisted reports mode persisted, status on"
+"$CLI" on >/dev/null
+[[ ! -f $PFLAG && $("$CLI" mode) == global ]] || fail "on after persisted drops the persisted flag"
+"$CLI" persisted >/dev/null; "$CLI" off >/dev/null
+[[ ! -f $PFLAG && ! -f $FLAG && $("$CLI" mode) == local ]] || fail "off clears both flags"
+pass "local/global/persisted modes switch cleanly"

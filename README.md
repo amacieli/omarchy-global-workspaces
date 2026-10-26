@@ -56,6 +56,43 @@ ln -s ~/.config/omarchy/plugins/io.github.amacieli.global-workspaces/bin/omarchy
 
 `omarchy-global-workspaces off` removes the flag and Hyprland returns to Omarchy's native per-monitor bindings.
 
+The bar widget shows slots 1–5, like stock Omarchy. `SUPER+6…0` still work; those slots just aren't drawn.
+
+## Modes
+
+| Mode | Command | Behaviour |
+|---|---|---|
+| Local | `omarchy-global-workspaces off` | Omarchy's native per-monitor workspaces |
+| Global | `omarchy-global-workspaces on` | Slot N on every monitor at once |
+| Global Persisted | `omarchy-global-workspaces persisted` | Global, plus app placement is remembered and restored at login |
+
+`omarchy-global-workspaces mode` prints `local`, `global` or `persisted`.
+
+To pick the mode from the Omarchy menu (Trigger › Toggle › Workspace Mode), add entries to `~/.config/omarchy/extensions/omarchy-menu.jsonc`. A plugin cannot install menu entries itself:
+
+```jsonc
+"trigger.toggle.workspace-mode":        { "icon": "󱂬", "label": "Workspace Mode" },
+"trigger.toggle.workspace-mode.global": { "icon": "󱂬", "label": "Global",
+  "checked": "[[ $(omarchy-global-workspaces mode) == global ]]",    "action": "omarchy-global-workspaces on" },
+"trigger.toggle.workspace-mode.global-persisted": { "icon": "󱂬", "label": "Global Persisted",
+  "checked": "[[ $(omarchy-global-workspaces mode) == persisted ]]", "action": "omarchy-global-workspaces persisted" },
+"trigger.toggle.workspace-mode.local":  { "icon": "󱂬", "label": "Local",
+  "checked": "[[ $(omarchy-global-workspaces mode) == local ]]",     "action": "omarchy-global-workspaces off" }
+```
+
+(use the full path to the script if it is not on your `PATH`).
+
+### Global Persisted
+
+While this mode is on, Hyprland events run `bin/omarchy-gws-persist`:
+
+- **Recording** (debounced, on window open/move/focus): per app class, the monitor *name*, slot 1–10, floating state and geometry go to `~/.local/state/omarchy/global-workspaces/layout.json`.
+- **Restoring**: when a window of a recorded class opens (for example from autostart after login), it is moved to its recorded monitor and slot. The n-th window of a class takes the n-th recorded entry. Floating windows also get their position and size back.
+- **It does not launch apps.** It places windows that you or your autostart open.
+- **Tiled order is not restored.** Tiled windows land on the right monitor and slot; their order within the workspace follows the order the apps open.
+- Recording is merge-only per class, so closing apps at logout cannot erase the layout; for the first 3 minutes after login a class never loses recorded windows while its other windows are still opening. Entries unseen for 30 days are dropped.
+- A monitor that is not connected is skipped.
+
 ## Uninstall
 
 ```sh
@@ -93,6 +130,6 @@ omarchy plugin validate .
 
 MIT, see [LICENSE](LICENSE).
 
-## Known issues
+## Notes
 
-See [docs/investigations/2026-10-25-repeat-press-shuffle.md](docs/investigations/2026-10-25-repeat-press-shuffle.md): repeated `SUPER+N` can leave monitors on the wrong slots because empty workspaces are created on the focused monitor and persistence is not taking effect. Not yet fixed.
+Background on the repeated-`SUPER+N` investigation and its fixes: [docs/investigations/2026-10-25-repeat-press-shuffle.md](docs/investigations/2026-10-25-repeat-press-shuffle.md).

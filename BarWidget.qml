@@ -99,22 +99,10 @@ BarWidget {
     return slotOfId(Hyprland.focusedWorkspace.id) === slot
   }
 
+  // Stock Omarchy shows slots 1-5 only. Slots 6-10 stay reachable by keybinding
+  // (SUPER+6..0) but never appear in the bar.
   function workspaceIds() {
-    var slots = [1, 2, 3, 4, 5]
-    var values = Hyprland.workspaces.values
-
-    for (var i = 0; i < values.length; i++) {
-      var id = values[i].id
-      var slot = slotOfId(id)
-      // Slots 1–5 are always shown. Beyond that, show a slot only while it is
-      // occupied or focused: persistent (empty) workspaces exist for all ten
-      // slots, so existence alone must not make a slot appear.
-      if (slot > 5 && slot <= 10 && slots.indexOf(slot) === -1
-          && (root.slotOccupied(slot) || root.slotFocused(slot))) slots.push(slot)
-    }
-
-    slots.sort(function(left, right) { return left - right })
-    return slots
+    return [1, 2, 3, 4, 5]
   }
 
   // Click handlers run the plugin's own scripts by absolute path, so they work
@@ -156,7 +144,7 @@ BarWidget {
         readonly property bool focused: root.slotFocused(modelData)
 
         bar: root.bar
-        text: focused ? "\uDB85\uDCFB" : (modelData === 10 ? "0" : String(modelData))
+        text: String(modelData)
         opacity: occupied || focused ? 1 : 0.5
         horizontalMargin: 6
         verticalPadding: 6

@@ -353,3 +353,30 @@ if hl.unbind and hl.bind then
   hl.bind("SUPER + CTRL + TAB", hl.dsp.focus({ workspace = "previous_per_monitor" }),
     { description = "Former workspace" })
 end
+
+-- ── Global Persisted mode ─────────────────────────────────────────────────────
+-- Only when `omarchy-global-workspaces persisted` created the flag file. Records
+-- where each app lives (monitor name + slot, floating geometry) and puts apps
+-- back when their windows open at the next login. All work happens in
+-- bin/omarchy-gws-persist, backgrounded so it never blocks the compositor.
+do
+  local flag = (os.getenv("XDG_STATE_HOME") or ((os.getenv("HOME") or "") .. "/.local/state"))
+               .. "/omarchy/global-workspaces/persisted"
+  local fh = io.open(flag, "r")
+  if fh then fh:close() end
+  if fh and hl.on then
+    local persist = plugin_bin("omarchy-gws-persist")
+    local function run(args)
+      pcall(function() os.execute(persist .. " " .. args .. " >/dev/null 2>&1 &") end)
+    end
+    hl.on("hyprland.start", function() run("session-start") end)
+    hl.on("window.open", function(w)
+      local ok, addr = pcall(function() return w.address end)
+      if ok and addr then run("place " .. addr) end
+      run("snapshot")
+    end)
+    hl.on("window.move_to_workspace", function() run("snapshot") end)
+    hl.on("workspace.move_to_monitor", function() run("snapshot") end)
+    hl.on("window.active", function() run("snapshot") end)  -- catches floating moves/resizes
+  end
+end
