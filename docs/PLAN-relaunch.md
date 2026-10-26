@@ -12,6 +12,50 @@ session, with the user choosing which ones, so that the existing placement logic
 puts each window on its recorded monitor and slot. The launch commands should come from what the Omarchy menu already points
 at, not from guessing at process command lines.
 
+## Decisions so far
+
+1. **Everything is ticked every time.** The picker never remembers earlier
+   unticking.
+2. **Side-effect apps start unticked.** Steam games and VMs (for example
+   `win11-vm`) are shown in the picker but deselected by default; the user ticks
+   them if wanted.
+3. **foot terminals are kept.** They are offered like any other app (see "Terminals"
+   below for what is and is not restored).
+4. **Only apps referenced by the Omarchy menu take part.** An app started by hand
+   from a terminal, with no `.desktop` entry and no menu action pointing at it, is
+   excluded from relaunch entirely: not offered, not greyed out, not launched.
+5. **The picker appears once per login, and only while Global Persisted is the
+   selected mode.** Records must survive any period spent in Local or plain Global
+   mode (next section).
+
+## Records survive other modes
+
+Requirement: logging in even once while Global Persisted is *not* selected must
+not lose any app or window record. The user would otherwise start from scratch.
+
+How the design guarantees it:
+
+- **Nothing runs outside persisted mode.** The Lua hooks that record, place and
+  show the picker are only registered when the persisted flag exists at config
+  load. In Local or Global mode no code touches `layout.json`, so logins there
+  leave it byte-for-byte unchanged. (The recorder is already a no-op without the
+  flag; the picker and relaunch will follow the same rule.)
+- **Switching modes never deletes records.** `on`, `off` and `persisted` leave
+  `layout.json` and the launcher index alone. Wiping records is a separate,
+  explicit command (`omarchy-global-workspaces forget`), never a side effect.
+- **Pruning counts persisted logins, not calendar days.** Today the recorder drops
+  entries unseen for 30 days of wall-clock time. After a long stretch in another
+  mode, the first persisted snapshot would erase everything not currently open.
+  Replace that with a counter of *persisted-mode logins* (incremented by
+  `session-start`): an entry is dropped only after it has gone unseen for, say, 60
+  persisted logins. Time spent in other modes then costs nothing. **This changes
+  existing code; it is step 0 of the build order.**
+- **One-deep backup.** Before the first write of each persisted login, copy
+  `layout.json` to `layout.json.bak`, so a bug or a bad login can be undone by hand.
+- **Records go stale, not missing, while away.** Apps opened or moved during
+  Local/Global mode are not recorded. Re-enabling Persisted resumes from the last
+  persisted state and updates it as windows open.
+
 ## Findings that shape the design
 
 Checked on this machine, 2026-10-26.
@@ -65,9 +109,12 @@ first unambiguous hit:
 3. for Chromium-family PWAs (`vivaldi-<host>__-<profile>`,
    `chrome-<id>-<profile>`, `crx__<id>`): extract the host or extension id and
    match it against the URL or id in `Exec=` (the Teams case above);
-4. otherwise **unresolved**: not relaunched, listed by `show-unresolved`.
+4. otherwise **unresolved**: excluded from relaunch (decision 4). They are listed
+   only by `omarchy-gws-persist launchers --unresolved`, for debugging.
 
 Ambiguity (two `.desktop` entries match) is treated as unresolved, never guessed.
+An app launched by hand from a terminal normally has no `.desktop` entry or menu
+action, so it falls out here with no special handling.
 
 ### 2. What the recording stores
 
@@ -86,17 +133,18 @@ Flow, run once per login from the existing `hyprland.start` hook:
 1. After a short delay, wait until `hyprctl monitors` shows the recorded monitors
    (or a timeout passes), so placement has somewhere to put windows.
 2. Build the list: one row per recorded window, `app name (monitor, slot)`, for
-   every entry that has a resolved launcher. Rows for apps that are **already
-   running** (started by autostart) are shown ticked-and-disabled as "running" and
-   are never launched twice. Unresolved apps are listed greyed out with the reason,
-   so nothing silently disappears.
+   every entry that resolves to a menu-referenced launcher. Rows for apps that are
+   **already running** (started by autostart) are shown as "running" and are never
+   launched twice. Apps with no menu-referenced launcher are not listed at all
+   (decision 4). Side-effect apps (Steam games, VMs) are listed but **unticked**
+   (decision 2); everything else is ticked.
 3. Show the picker. Escape or "Skip" launches nothing.
 4. On Launch, start the ticked rows one at a time, about 0.5 s apart, through
    `hyprctl dispatch hl.dsp.exec_cmd(...)` (never a shell with unquoted data).
    The existing `window.open` hook then moves each window to its recorded monitor
    and slot.
-5. Remember the last selection only as a hint (rows the user unticked stay
-   unticked next login? **open question 1**).
+5. Nothing about the selection is remembered: next login starts with the defaults
+   again (decision 1).
 
 Single-instance apps (Discord, Vivaldi) ignore a second launch, so launches are
 counted per class: `recorded - running`. Vivaldi's windows and PWAs launch through
@@ -118,15 +166,28 @@ needed.
 Proposal: build B first (it fixes the data flow and tests), then A as the polished
 front end, both feeding the same `relaunch --apply <selection>` command.
 
+### Terminals
+
+foot windows are kept in the picker. They resolve to a menu entry in two ways: a
+dedicated one such as the Hermes TUI (`foot --app-id=TUI.tile ... hermes --tui`),
+and the plain `foot.desktop`. What is restored is what the menu entry launches: the
+Hermes TUI comes back as itself; a plain foot comes back as a fresh terminal in the
+default directory, **not** in the directory it had. A foot running something the
+menu does not know about (an ad-hoc command, a particular `--working-directory`)
+is excluded by decision 4. Restoring working directories would need recording
+`/proc/<pid>/cwd` and is out of scope for v1.
+
 ### 4. Safety
 
 - **Dry run**: `omarchy-gws-persist relaunch --dry-run` prints the list and the
   command for each row, and launches nothing. First thing to test live.
 - The picker appears **only in Global Persisted mode** and **only once per login**
   (guarded by the `session-start` stamp), not after every config reload.
-- A denylist hides apps that should never be offered: for example `win11-vm`
-  (side effects), shells started by the user with arguments, and anything the user
-  nulls out in `launchers.json`.
+- **Default-unticked list** for apps with side effects: Steam launches
+  (`steam steam://...`), VM launchers (`win11-vm`, anything calling `VBoxManage` or
+  `virt-manager`), plus whatever the user adds in `launchers.json`. These appear in
+  the picker, deselected. A `null` value in `launchers.json` hides an app from the
+  picker completely.
 - Never kills or moves windows it did not open.
 
 ### 5. Menu surface
@@ -138,6 +199,10 @@ new menu entry.
 
 ## Build order
 
+0. **Make records safe across modes** (existing recorder): replace the 30-day
+   wall-clock prune with the persisted-login counter, add `layout.json.bak`, add
+   `omarchy-global-workspaces forget`, and add tests proving `layout.json` is
+   unchanged by logins in Local/Global mode and by mode switches.
 1. **Resolver only**: `.desktop` scan plus class matching, with
    `omarchy-gws-persist launchers` printing a table of *window class → matched
    entry → command → confidence* for the windows open right now. No launching.
@@ -168,20 +233,28 @@ new menu entry.
 - Dry run prints the plan and launches nothing.
 - Override file wins, and `null` hides an app from the picker.
 - Picker is offered once per login, and not in plain Global or Local mode.
+- Records survive: with persisted mode off, simulate several logins and mode
+  switches and assert `layout.json` is byte-identical; after 100 days of fake wall
+  time in another mode, the first persisted snapshot prunes nothing; entries are
+  dropped only after the persisted-login threshold.
+- Side-effect apps (Steam, VM) are listed unticked; ordinary apps are listed ticked;
+  every selection starts from those defaults regardless of the previous login.
+- A class with no `.desktop` entry or menu action is not listed.
+- `forget` is the only command that removes records.
 
 ## Open questions
 
-1. Should next login remember what was unticked, or always start with everything
-   ticked? You said default to all selected; proposed: always all ticked.
-2. Steam games and VMs (`win11-vm`): offer them in the picker like any other app
-   (ticked by default), or keep them on the denylist so they are never offered?
-   Proposed: denylist, since launching them has side effects.
-3. Terminals (`foot` with a working directory): offer in the picker, or skip in
-   v1? Proposed: skip in v1.
-4. Picker UI order: terminal picker first, Quickshell overlay second (proposed), or
-   overlay straight away?
-5. Should a user-extension `action` in `omarchy-menu.jsonc` count as a launcher
-   source in v1, or only `.desktop` entries? Proposed: `.desktop` first.
+1. **Recording versus relaunch for non-menu apps.** Decision 4 excludes them from
+   relaunch. Should they also stay out of `layout.json` (nothing recorded, nothing
+   placed), or still be recorded and placed when opened by hand, as today?
+   Proposed: keep recording and placing them (it is harmless and keeps hand-opened
+   windows where they were left), but never offer them in the picker.
+2. **Persisted-login threshold.** 60 persisted logins before an unseen entry is
+   dropped is a guess. Too short loses rarely used apps; too long keeps dead ones.
+3. **Picker UI order.** Terminal picker (gum in a floating foot) first, Quickshell
+   overlay second (proposed), or the overlay straight away?
+4. **Default-unticked list.** Is "Steam launches and VM launchers" the right
+   starting set?
 
 ## Known limits that remain
 
