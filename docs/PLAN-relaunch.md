@@ -164,23 +164,29 @@ counted per class: `recorded - running`. Vivaldi's windows and PWAs launch throu
 their own `.desktop` entries, which is why the PWA host match in the resolver is
 needed.
 
-**Picker UI: Omarchy's own menu.** Omarchy ships `omarchy menu select`
-(`omarchy-menu-select <prompt> [option...]`), a single-choice menu in the shell's
-own look, where an option may carry an icon glyph and a subtext. It has no
-multi-select, so the checklist is a loop around it:
+**Picker UI: Omarchy's own menu, in-place checklist for v1.** Decision: v1 ships
+the version that does not blink. Omarchy's menu definition supports a `provider`
+(a submenu whose rows come from a command returning JSON) and a `checked` condition
+that appends a tick to a row, so the checklist should live in one open menu, with
+each row's action flipping that app's tick and the menu refreshing in place
+(`omarchy menu refresh`).
 
-1. Show one row per app: a tick glyph (`☑`/`☐`) plus the app name, with the
-   monitor and slot as subtext, and two extra rows, **Launch** and **Skip**.
-2. Choosing an app row flips its tick and shows the menu again; choosing **Launch**
-   starts the ticked apps; **Skip** or Escape launches nothing.
-3. The loop state is a plain list in a temporary file, so the menu code stays a thin
-   wrapper over `relaunch --apply <ids>`.
+This is the less certain route, so it starts with a **spike** (build step 4a) that
+answers, on the real menu, before any picker code is written:
 
-Consequence to accept: each toggle closes and reopens the menu (a flicker). If
-that proves annoying, the menu's provider mechanism (`provider: "name"` returning
-JSON rows with `checked`) could allow an in-place checklist, but that needs a
-spike first and is not assumed. A custom Quickshell overlay and a gum-based picker
-are dropped from the plan, since the menu already exists.
+1. Does choosing a row in a provider submenu close the menu, or can a row be marked
+   to keep it open?
+2. If it closes, can the action reopen the same route (`omarchy menu summon <route>`)
+   fast enough to look like an in-place update?
+3. Do the provider's JSON rows support what we need: per-app label, monitor and slot
+   as subtext, a tick, and fixed **Launch** and **Skip** rows?
+
+Fallback if the spike says no: a loop around `omarchy menu select` (single choice,
+returns the picked row), where each toggle closes and reopens the menu with a brief
+blink. That works with today's menu but is not the v1 goal.
+
+Selection state is a plain list in a temporary file either way, so the menu code
+stays a thin wrapper over `relaunch --apply <ids>`.
 
 ### Terminals
 
@@ -232,8 +238,11 @@ new menu entry.
    Old entries without the field keep working until their class resolves.
 3. **`relaunch --dry-run`** and **`relaunch --apply <selection>`** with the
    count rule, staggering and the default-unticked list. No UI yet; selection is a list of ids.
-4. **Menu picker** (`omarchy-menu-select` loop) feeding `--apply`; plus an
-   on-demand menu entry to run it without rebooting, for testing.
+4a. **Spike: in-place checklist** in the Omarchy menu (questions above). Throwaway
+   menu entries only; no plugin code.
+4. **Menu picker** feeding `--apply`: the in-place provider checklist if the spike
+   passes, otherwise the `omarchy-menu-select` loop; plus an on-demand menu entry to
+   run it without rebooting, for testing.
 5. **Wire into `hyprland.start`** in the Lua template: wait for monitors, show
    the picker once per login, persisted mode only.
 6. README and menu snippet.
@@ -266,19 +275,15 @@ new menu entry.
   launching the app by hand and letting the recorder see it brings it back (and a
   Steam or VM row is again unticked by default).
 - Skip and Escape delete nothing.
-- The menu loop: toggling flips a tick, Launch returns the ticked ids, Skip and
-  Escape return none (with `omarchy-menu-select` stubbed).
+- The picker's selection logic: toggling flips a tick, Launch returns the ticked
+  ids, Skip and Escape return none (menu stubbed).
 - Records are removed only by untick-and-Launch, `forget`, or an unresolvable class.
 
 ## Open questions
 
-1. **Menu flicker.** `omarchy menu select` shows a list and returns the one row you
-   pick, then closes. It cannot hold several ticks at once. So each time you tick or
-   untick a row, the menu closes and is shown again with the new tick state, which
-   looks like a brief blink. Proposed: accept that for v1, because it works with the
-   menu as it is and needs nothing from Omarchy. If it proves annoying, a later spike
-   can try the menu's `provider` mechanism, which may allow an in-place checklist.
-   No decision needed unless you would rather spike first.
+None blocking. The one unknown is whether the menu's `provider` mechanism can keep
+the checklist open between toggles; build step 4a answers it, and the fallback is
+described under "Picker UI".
 
 ## Known limits that remain
 
