@@ -88,7 +88,7 @@ While this mode is on, Hyprland events run `bin/omarchy-gws-persist`:
 
 - **Recording** (debounced, on window open/move/focus): per app class, the monitor *name*, slot 1–10, floating state and geometry go to `~/.local/state/omarchy/global-workspaces/layout.json`.
 - **Restoring**: when a window of a recorded class opens (for example from autostart after login), it is moved to its recorded monitor and slot. The n-th window of a class takes the n-th recorded entry. Floating windows also get their position and size back.
-- **It does not launch apps.** It places windows that you or your autostart open.
+- **It does not launch apps yet.** It places windows that you or your autostart open. Relaunching is planned: [docs/PLAN-relaunch.md](docs/PLAN-relaunch.md).
 - **Tiled order is not restored.** Tiled windows land on the right monitor and slot; their order within the workspace follows the order the apps open.
 - Recording is merge-only per class, so closing apps at logout cannot erase the layout; for the first 3 minutes after login a class never loses recorded windows while its other windows are still opening. Entries unseen for 30 days are dropped.
 - A monitor that is not connected is skipped.
