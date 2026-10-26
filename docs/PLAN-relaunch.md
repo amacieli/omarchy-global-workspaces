@@ -29,12 +29,14 @@ at, not from guessing at process command lines.
 5. **The picker appears once per login, and only while Global Persisted is the
    selected mode.** Records must survive any period spent in Local or plain Global
    mode (next section).
-6. **Unticking is permanent.** If you untick an app that was ticked and press
-   Launch, it is dismissed for good: its record is deleted, so it no longer appears
-   in the picker (or is placed) at later logins. It comes back only if you launch
-   it yourself later, because the recorder then records it again like any newly
-   seen app. Skip or Escape dismisses nothing. For an app with several windows
-   (two Vivaldi windows), dismissal removes only the row you unticked.
+6. **Anything not ticked when Launch is pressed is dismissed for good.** Its record
+   is deleted, so it no longer appears in the picker (or is placed) at later
+   logins. It comes back only if you launch it yourself later, because the recorder
+   then records it again like any newly seen app. This applies equally to a row you
+   unticked and to a row that started unticked (Steam games, VMs): a Steam game or
+   VM you leave unticked is dismissed, and returns, unticked again, once you have
+   launched it by hand. Skip or Escape dismisses nothing. For an app with several
+   windows (two Vivaldi windows), dismissal removes only the rows left unticked.
 7. **The picker is built from Omarchy's own menu** (`omarchy-menu-select`), not a
    separate tool.
 
@@ -153,10 +155,9 @@ Flow, run once per login from the existing `hyprland.start` hook:
    `hyprctl dispatch hl.dsp.exec_cmd(...)` (never a shell with unquoted data).
    The existing `window.open` hook then moves each window to its recorded monitor
    and slot.
-5. On Launch, ticked rows are started. Rows that were ticked by default and that the
-   user unticked are dismissed: their records are deleted (decision 6). Rows
-   unticked by default (Steam, VMs) that the user left alone are neither launched
-   nor dismissed. Skip and Escape change nothing.
+5. On Launch, ticked rows are started and every other row is dismissed: its record
+   is deleted (decision 6), whether the user unticked it or it started unticked
+   (Steam, VMs). Skip and Escape change nothing.
 
 Single-instance apps (Discord, Vivaldi) ignore a second launch, so launches are
 counted per class: `recorded - running`. Vivaldi's windows and PWAs launch through
@@ -259,30 +260,25 @@ new menu entry.
   every selection starts from those defaults regardless of the previous login.
 - A class with no `.desktop` entry or menu action is not listed, not recorded and
   not placed; its old record disappears at the first filtered snapshot.
-- Unticking a default-ticked row and pressing Launch deletes exactly that record
-  (one window of a multi-window class leaves the others); the next login does not
-  list it; launching the app by hand and letting the recorder see it brings it
-  back.
-- Skip and Escape delete nothing. A default-unticked row (Steam, VM) left alone is
-  neither launched nor deleted.
+- On Launch, each row left unticked has its record deleted, including rows that
+  started unticked (Steam, VM); exactly those records go (one window of a
+  multi-window class leaves the others); the next login does not list them;
+  launching the app by hand and letting the recorder see it brings it back (and a
+  Steam or VM row is again unticked by default).
+- Skip and Escape delete nothing.
 - The menu loop: toggling flips a tick, Launch returns the ticked ids, Skip and
   Escape return none (with `omarchy-menu-select` stubbed).
 - Records are removed only by untick-and-Launch, `forget`, or an unresolvable class.
 
 ## Open questions
 
-1. **Dismissing a default-unticked app.** Steam games and VMs start unticked
-   (decision 2) and, under decision 6, only an *active untick of a ticked row*
-   dismisses. So a Steam game you never want offered again cannot be dismissed by
-   leaving it unticked. Proposed: `omarchy-global-workspaces forget <class>` for
-   those, plus the option of ticking a row and then unticking it before Launch
-   counting as a dismissal. Is that acceptable, or should every row (including
-   Steam and VMs) be dismissed by leaving it unticked at Launch?
-2. **In-place checklist.** Is the menu flicker on each toggle acceptable for v1, or
-   should a spike on the menu's `provider` mechanism come first?
-
-(The earlier "60 persisted logins" cutoff question is gone: explicit dismissal
-replaces automatic expiry.)
+1. **Menu flicker.** `omarchy menu select` shows a list and returns the one row you
+   pick, then closes. It cannot hold several ticks at once. So each time you tick or
+   untick a row, the menu closes and is shown again with the new tick state, which
+   looks like a brief blink. Proposed: accept that for v1, because it works with the
+   menu as it is and needs nothing from Omarchy. If it proves annoying, a later spike
+   can try the menu's `provider` mechanism, which may allow an in-place checklist.
+   No decision needed unless you would rather spike first.
 
 ## Known limits that remain
 
