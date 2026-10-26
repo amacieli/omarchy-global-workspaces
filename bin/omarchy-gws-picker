@@ -1,0 +1,54 @@
+#!/bin/bash
+# omarchy-gws-picker — login checklist for Global Persisted mode. Runs in a foot window.
+#
+# Lists the recorded apps that are not open yet, ticked by default except apps with
+# side effects (Steam, VMs). Enter launches the ticked ones and dismisses the rest
+# from the record. Esc or Ctrl-C leaves everything as it was.
+#
+# GWS_GUM overrides the gum binary (used by the tests).
+set -u
+
+ROOT=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
+GUM=${GWS_GUM:-gum}
+DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/global-workspaces"
+PERSIST="$ROOT/bin/omarchy-gws-persist"
+
+pause_on_error() {
+  printf '\n%s\n' "$1" >&2
+  read -r -t 30 -p "Press Enter to close. " _ || true
+  exit 1
+}
+
+[[ -f $DIR/persisted ]] || exit 0
+command -v "$GUM" >/dev/null || pause_on_error "gum is not installed; the relaunch checklist cannot open."
+
+options=$(python3 "$ROOT/lib/gws.py" picker-options) || pause_on_error "could not read the recorded layout."
+[[ -n $options ]] || exit 0                # nothing recorded that is not already open
+
+labels=() defaults=()
+while IFS=$'\t' read -r on label; do
+  labels+=("$label")
+  [[ $on == 1 ]] && defaults+=("$label")
+done <<<"$options"
+
+selected=()
+if ((${#defaults[@]})); then
+  selected=(--selected "$(IFS=,; echo "${defaults[*]}")")
+fi
+
+# Esc / Ctrl-C: gum exits non-zero, nothing is launched or dismissed.
+chosen=$(printf '%s\n' "${labels[@]}" | "$GUM" choose --no-limit --height 20 \
+  --header "Relaunch? x toggles, Enter launches, Esc leaves all as is" \
+  "${selected[@]}") || exit 0
+
+if [[ -z $chosen ]]; then
+  # Launching with nothing ticked dismisses every row; make that a deliberate choice.
+  "$GUM" confirm "Nothing is ticked. Launching now removes all ${#labels[@]} recorded apps. Continue?" || exit 0
+fi
+
+mapfile -t ids < <(printf '%s\n' "$chosen" | python3 "$ROOT/lib/gws.py" picker-ids)
+if ! summary=$("$PERSIST" relaunch --apply "${ids[@]}" 2>&1); then
+  pause_on_error "$summary"
+fi
+printf '%s\n' "$summary"
+sleep 1

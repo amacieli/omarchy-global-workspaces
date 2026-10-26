@@ -1,206 +1,49 @@
 #!/bin/bash
-# omarchy-gws-persist — "Global Persisted" mode: remember where apps live.
+# omarchy-gws-persist — "Global Persisted" mode: record, place and relaunch apps.
 #
-# Usage: omarchy-gws-persist <snapshot|place ADDRESS|session-start|show>
+# Usage:
+#   omarchy-gws-persist snapshot                    record open windows (debounced 2 s)
+#   omarchy-gws-persist place ADDRESS               place a window the login picker started
+#   omarchy-gws-persist session-start               mark the start of a login
+#   omarchy-gws-persist show                        print layout.json
+#   omarchy-gws-persist forget [CLASS]              delete records (one class, or all)
+#   omarchy-gws-persist launchers [--unresolved]    window class -> launcher table
+#   omarchy-gws-persist resolve CLASS               launcher for one class, as JSON
+#   omarchy-gws-persist relaunch --list | --dry-run | --apply ID...
 #
-# Called from hypr/workspace-global.lua's event hooks, only while Global
-# Persisted mode is on.
-#
-#   snapshot       Debounced (2 s). Record, per window class, the monitor
-#                  (by NAME), slot 1-10, floating state and geometry of every
-#                  window currently open.
-#   place ADDRESS  A window just opened: if its class was recorded, move it to
-#                  the recorded monitor/slot (and floating geometry).
-#   session-start  Mark the start of a login; opens the restore grace period.
-#   show           Print the recorded layout.
-#
-# State: $XDG_STATE_HOME/omarchy/global-workspaces/layout.json
-#
-# Notes on how it stays safe:
-#   * Recording is merge-only per class. A class absent from the current window
-#     list keeps its old entries, so closing apps while logging out cannot
-#     erase the layout. Entries unseen for 30 days are pruned.
-#   * For the first 180 s after session-start a class's list is never
-#     truncated, because its remaining windows have not been opened yet.
-#   * The n-th window of a class (in Hyprland client order) takes the n-th
-#     recorded entry.
-#   * Tiled windows are placed on the right monitor and slot; their order inside
-#     a workspace follows the order the apps open. Only floating windows get
-#     exact geometry back.
+# The logic is in lib/gws.py, which says who reads layout.json and when.
+# State: $XDG_STATE_HOME/omarchy/global-workspaces/
 
 set -u
 
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
-DIR="$STATE/global-workspaces"
-LAYOUT="$DIR/layout.json"
-BASES="$STATE/monitor-bases.json"
-SESSION="$DIR/session-start"
+ROOT=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
+DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/global-workspaces"
 PERSIST_FLAG="$DIR/persisted"
 
-cmd="${1:-}"
-mkdir -p "$DIR"
+engine() { exec python3 "$ROOT/lib/gws.py" "$@"; }
 
-case "$cmd" in
-  session-start)
-    date +%s > "$SESSION"
-    ;;
-
-  show)
-    [[ -f $LAYOUT ]] && cat "$LAYOUT" || echo '{}'
-    ;;
-
+case "${1:-}" in
   snapshot)
     [[ -f $PERSIST_FLAG ]] || exit 0
     # Debounce: the first caller sleeps and then records the latest state;
     # callers arriving meanwhile exit at once.
+    mkdir -p "$DIR"
     exec 9>"$DIR/snapshot.lock"
     flock -n 9 || exit 0
     sleep "${GWS_DEBOUNCE:-2}"
     exec 9>&-
-    exec python3 - "$LAYOUT" "$BASES" "$SESSION" <<'PY'
-import json, os, subprocess, sys, tempfile, time
-
-layout_path, bases_path, session_path = sys.argv[1:4]
-GRACE, MAX_AGE, STRIDE = 180, 30 * 86400, 10
-
-
-def hypr(*a):
-    r = subprocess.run(["hyprctl", *a, "-j"], capture_output=True, text=True)
-    return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
-
-
-clients, monitors = hypr("clients"), hypr("monitors")
-if clients is None or monitors is None:
-    sys.exit(0)
-try:
-    bases = json.load(open(bases_path))
-except Exception:
-    sys.exit(0)
-owner = {b: n for n, b in bases.items()}   # base -> monitor name
-
-try:
-    layout = json.load(open(layout_path))
-    entries = layout.get("entries", {})
-except Exception:
-    entries = {}
-
-try:
-    in_grace = time.time() - int(open(session_path).read().strip()) < GRACE
-except Exception:
-    in_grace = False
-
-now = int(time.time())
-current = {}
-for c in clients:
-    if not c.get("mapped", True) or c.get("hidden"):
-        continue
-    cls, wsid = c.get("class") or "", c["workspace"]["id"]
-    if not cls or wsid <= 0:
-        continue
-    name = owner.get(((wsid - 1) // STRIDE) * STRIDE)
-    if name is None:
-        continue
-    current.setdefault(cls, []).append({
-        "monitor": name,
-        "slot": (wsid - 1) % STRIDE + 1,
-        "floating": bool(c.get("floating")),
-        "at": c.get("at"),
-        "size": c.get("size"),
-        "seen": now,
-    })
-
-for cls, wins in current.items():
-    old = entries.get(cls, [])
-    if in_grace and len(wins) < len(old):
-        entries[cls] = wins + old[len(wins):]
-    else:
-        entries[cls] = wins
-
-entries = {k: v for k, v in entries.items()
-           if v and max(e.get("seen", 0) for e in v) > now - MAX_AGE}
-
-os.makedirs(os.path.dirname(layout_path), exist_ok=True)
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(layout_path), prefix=".layout.")
-with os.fdopen(fd, "w") as f:
-    json.dump({"version": 1, "entries": entries}, f, indent=2, sort_keys=True)
-    f.flush()
-    os.fsync(f.fileno())
-os.rename(tmp, layout_path)
-PY
+    engine snapshot
     ;;
-
   place)
-    ADDR="${2:-}"
-    [[ -n $ADDR && -f $PERSIST_FLAG && -f $LAYOUT && -f $BASES ]] || exit 0
+    [[ -n ${2:-} && -f $PERSIST_FLAG ]] || exit 0
     sleep "${GWS_PLACE_DELAY:-0.2}"
-    exec python3 - "$ADDR" "$LAYOUT" "$BASES" <<'PY'
-import json, subprocess, sys, time
-
-addr, layout_path, bases_path = sys.argv[1:4]
-
-
-def hypr(*a):
-    r = subprocess.run(["hyprctl", *a], capture_output=True, text=True)
-    return r
-
-
-def jq(what):
-    r = hypr(what, "-j")
-    return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
-
-
-def dispatch(expr):
-    return hypr("dispatch", expr).returncode == 0
-
-
-try:
-    entries = json.load(open(layout_path)).get("entries", {})
-    bases = json.load(open(bases_path))
-except Exception:
-    sys.exit(0)
-
-me = None
-for _ in range(5):                      # class can lag the open event
-    clients = jq("clients") or []
-    me = next((c for c in clients if c["address"] == addr), None)
-    if me and me.get("class"):
-        break
-    time.sleep(0.15)
-if not me or not me.get("class"):
-    sys.exit(0)
-
-cls = me["class"]
-recorded = entries.get(cls)
-if not recorded:
-    sys.exit(0)
-
-same = [c["address"] for c in clients if c.get("class") == cls and c.get("mapped", True)]
-rank = same.index(addr) if addr in same else 0
-if rank >= len(recorded):
-    sys.exit(0)
-want = recorded[rank]
-
-connected = {m["name"] for m in (jq("monitors") or [])}
-if want["monitor"] not in connected or want["monitor"] not in bases:
-    sys.exit(0)
-
-target = bases[want["monitor"]] + int(want["slot"])
-sel = 'window = "address:%s"' % addr
-if me["workspace"]["id"] != target:
-    dispatch('hl.dsp.window.move({ workspace = "%d", follow = false, %s })' % (target, sel))
-
-if want.get("floating") and want.get("at") and want.get("size"):
-    if not me.get("floating"):
-        dispatch('hl.dsp.window.float({ action = "enable", %s })' % sel)
-    dispatch('hl.dsp.window.resize({ x = %d, y = %d, exact = true, %s })'
-             % (want["size"][0], want["size"][1], sel))
-    dispatch('hl.dsp.window.move({ x = %d, y = %d, exact = true, %s })'
-             % (want["at"][0], want["at"][1], sel))
-PY
+    engine place "$2"
     ;;
-
+  session-start|show|forget|launchers|resolve|relaunch)
+    engine "$@"
+    ;;
   *)
-    echo "Usage: omarchy-gws-persist <snapshot|place ADDRESS|session-start|show>" >&2
+    echo "Usage: omarchy-gws-persist <snapshot|place ADDRESS|session-start|show|forget [CLASS]|launchers [--unresolved]|resolve CLASS|relaunch --list|--dry-run|--apply ID...>" >&2
     exit 1
     ;;
 esac

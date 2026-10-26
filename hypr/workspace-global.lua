@@ -369,7 +369,15 @@ do
     local function run(args)
       pcall(function() os.execute(persist .. " " .. args .. " >/dev/null 2>&1 &") end)
     end
-    hl.on("hyprland.start", function() run("session-start") end)
+    hl.on("hyprland.start", function()
+      run("session-start")
+      -- Login checklist: once per login, a few seconds after start so the
+      -- session's own autostart windows are already open when it is drawn.
+      pcall(function()
+        os.execute("(sleep 4; foot -a gws-picker -T 'Global workspaces: relaunch' -e "
+                   .. plugin_bin("omarchy-gws-picker") .. ") >/dev/null 2>&1 &")
+      end)
+    end)
     hl.on("window.open", function(w)
       local ok, addr = pcall(function() return w.address end)
       if ok and addr then run("place " .. addr) end
