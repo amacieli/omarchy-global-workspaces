@@ -14,8 +14,9 @@ at, not from guessing at process command lines.
 
 ## Decisions so far
 
-1. **Everything is ticked every time.** The picker never remembers earlier
-   unticking.
+1. **Every row starts ticked each login** (except side-effect apps, decision 2).
+   The picker has no memory of earlier *selections*; what persists is dismissal
+   (decision 6).
 2. **Side-effect apps start unticked.** Steam games and VMs (for example
    `win11-vm`) are shown in the picker but deselected by default; the user ticks
    them if wanted.
@@ -28,10 +29,12 @@ at, not from guessing at process command lines.
 5. **The picker appears once per login, and only while Global Persisted is the
    selected mode.** Records must survive any period spent in Local or plain Global
    mode (next section).
-6. **Unticking is for this login only.** If you untick an app and press Launch, the
-   app is simply not started this time. Its record is kept (the recorder only adds
-   or updates records, never removes one because an app was not running), and next
-   login it is ticked again.
+6. **Unticking is permanent.** If you untick an app that was ticked and press
+   Launch, it is dismissed for good: its record is deleted, so it no longer appears
+   in the picker (or is placed) at later logins. It comes back only if you launch
+   it yourself later, because the recorder then records it again like any newly
+   seen app. Skip or Escape dismisses nothing. For an app with several windows
+   (two Vivaldi windows), dismissal removes only the row you unticked.
 7. **The picker is built from Omarchy's own menu** (`omarchy-menu-select`), not a
    separate tool.
 
@@ -50,12 +53,12 @@ How the design guarantees it:
 - **Switching modes never deletes records.** `on`, `off` and `persisted` leave
   `layout.json` and the launcher index alone. Wiping records is a separate,
   explicit command (`omarchy-global-workspaces forget`), never a side effect.
-- **Pruning counts persisted logins, not calendar days.** Today the recorder drops
-  entries unseen for 30 days of wall-clock time. After a long stretch in another
-  mode, the first persisted snapshot would erase everything not currently open.
-  Replace that with a counter of *persisted-mode logins* (incremented by
-  `session-start`): an entry is dropped only after it has gone unseen for, say, 60
-  persisted logins. Time spent in other modes then costs nothing. **This changes
+- **No automatic pruning.** Today the recorder drops entries unseen for 30 days of
+  wall-clock time. After a long stretch in another mode, the first persisted
+  snapshot would erase everything not currently open. Since the user now dismisses
+  apps explicitly (decision 6), that timer is not needed and is **removed
+  entirely**: a record is deleted only by an untick-and-Launch, by `forget`, or
+  because its class stopped resolving to a menu entry (decision 4). **This changes
   existing code; it is step 0 of the build order.**
 - **One-deep backup.** Before the first write of each persisted login, copy
   `layout.json` to `layout.json.bak`, so a bug or a bad login can be undone by hand.
@@ -150,8 +153,10 @@ Flow, run once per login from the existing `hyprland.start` hook:
    `hyprctl dispatch hl.dsp.exec_cmd(...)` (never a shell with unquoted data).
    The existing `window.open` hook then moves each window to its recorded monitor
    and slot.
-5. Nothing about the selection is remembered: next login starts with the defaults
-   again (decision 1).
+5. On Launch, ticked rows are started. Rows that were ticked by default and that the
+   user unticked are dismissed: their records are deleted (decision 6). Rows
+   unticked by default (Steam, VMs) that the user left alone are neither launched
+   nor dismissed. Skip and Escape change nothing.
 
 Single-instance apps (Discord, Vivaldi) ignore a second launch, so launches are
 counted per class: `recorded - running`. Vivaldi's windows and PWAs launch through
@@ -209,10 +214,10 @@ new menu entry.
 
 ## Build order
 
-0. **Make records safe across modes** (existing recorder): replace the 30-day
-   wall-clock prune with the persisted-login counter, add `layout.json.bak`, add
-   `omarchy-global-workspaces forget`, and add tests proving `layout.json` is
-   unchanged by logins in Local/Global mode and by mode switches.
+0. **Make records safe across modes** (existing recorder): remove the 30-day
+   wall-clock prune, add `layout.json.bak`, add `omarchy-global-workspaces forget
+   [class]`, and add tests proving `layout.json` is unchanged by logins in
+   Local/Global mode and by mode switches.
 1. **Resolver only**: `.desktop` scan plus class matching, with
    `omarchy-gws-persist launchers` printing a table of *window class → matched
    entry → command → confidence* for the windows open right now. No launching.
@@ -221,7 +226,8 @@ new menu entry.
    (decision 4): snapshots store each window's resolved launcher, and classes that
    do not resolve are no longer recorded or placed. The first filtered snapshot
    removes records of unresolved classes already in `layout.json`; these are the
-   only records ever dropped by a rule other than the unseen-for-N-logins prune.
+   only records dropped by a rule rather than by the user (untick-and-Launch or
+   `forget`).
    Old entries without the field keep working until their class resolves.
 3. **`relaunch --dry-run`** and **`relaunch --apply <selection>`** with the
    count rule, staggering and the default-unticked list. No UI yet; selection is a list of ids.
@@ -247,28 +253,36 @@ new menu entry.
 - Picker is offered once per login, and not in plain Global or Local mode.
 - Records survive: with persisted mode off, simulate several logins and mode
   switches and assert `layout.json` is byte-identical; after 100 days of fake wall
-  time in another mode, the first persisted snapshot prunes nothing; entries are
-  dropped only after the persisted-login threshold.
+  time in another mode, the first persisted snapshot prunes nothing; no code path
+  removes a record by age.
 - Side-effect apps (Steam, VM) are listed unticked; ordinary apps are listed ticked;
   every selection starts from those defaults regardless of the previous login.
 - A class with no `.desktop` entry or menu action is not listed, not recorded and
   not placed; its old record disappears at the first filtered snapshot.
-- Unticking an app at login leaves its record intact; the next login lists it
-  ticked again.
+- Unticking a default-ticked row and pressing Launch deletes exactly that record
+  (one window of a multi-window class leaves the others); the next login does not
+  list it; launching the app by hand and letting the recorder see it brings it
+  back.
+- Skip and Escape delete nothing. A default-unticked row (Steam, VM) left alone is
+  neither launched nor deleted.
 - The menu loop: toggling flips a tick, Launch returns the ticked ids, Skip and
   Escape return none (with `omarchy-menu-select` stubbed).
-- `forget` is the only command that removes records.
+- Records are removed only by untick-and-Launch, `forget`, or an unresolvable class.
 
 ## Open questions
 
-1. **Unseen-app cutoff.** If an app stops being used (say you stop running Discord),
-   its record is kept for a while and then forgotten, so dead apps do not linger
-   in the picker forever. I counted that in persisted logins (so time away in
-   another mode costs nothing) and guessed 60. Proposed: 60 as a named constant you
-   can change; say if you want it shorter or longer. This is separate from
-   unticking, which never affects records (decision 6).
+1. **Dismissing a default-unticked app.** Steam games and VMs start unticked
+   (decision 2) and, under decision 6, only an *active untick of a ticked row*
+   dismisses. So a Steam game you never want offered again cannot be dismissed by
+   leaving it unticked. Proposed: `omarchy-global-workspaces forget <class>` for
+   those, plus the option of ticking a row and then unticking it before Launch
+   counting as a dismissal. Is that acceptable, or should every row (including
+   Steam and VMs) be dismissed by leaving it unticked at Launch?
 2. **In-place checklist.** Is the menu flicker on each toggle acceptable for v1, or
    should a spike on the menu's `provider` mechanism come first?
+
+(The earlier "60 persisted logins" cutoff question is gone: explicit dismissal
+replaces automatic expiry.)
 
 ## Known limits that remain
 
