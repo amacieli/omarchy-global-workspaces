@@ -7,9 +7,9 @@ starting the apps too.
 
 ## Goal
 
-At login, in Global Persisted mode, start the apps that were open last session,
-so that the existing placement logic puts each window on its recorded monitor and
-slot. The launch commands should come from what the Omarchy menu already points
+At login, in Global Persisted mode, offer to start the apps that were open last
+session, with the user choosing which ones, so that the existing placement logic
+puts each window on its recorded monitor and slot. The launch commands should come from what the Omarchy menu already points
 at, not from guessing at process command lines.
 
 ## Findings that shape the design
@@ -45,10 +45,11 @@ Checked on this machine, 2026-10-26.
 
 Build a *launcher index* from three sources, in priority order:
 
-1. **User overrides**, `~/.config/omarchy/global-workspaces/launchers.json`.
-   Hand-written `{ "<class>": "<command>" }`. Always wins. Setting a value to
-   `null` excludes that app from relaunch.
-2. **Learned**, `~/.local/state/omarchy/global-workspaces/launchers.json`, filled
+1. **User overrides**, `~/.local/state/omarchy/global-workspaces/launchers.json`
+   (the plugin's state directory, which survives plugin updates; the plugin's
+   install folder does not). Hand-written `{ "<class>": "<command>" }`. Always
+   wins. Setting a value to `null` hides that app from the login picker.
+2. **Learned**, `~/.local/state/omarchy/global-workspaces/launchers-learned.json`, filled
    when we can match a window to a `.desktop` entry with confidence, so later
    sessions skip the fuzzy matching.
 3. **`.desktop` scan**: for every `Application` entry, record `Name`, `Exec`
@@ -74,48 +75,66 @@ Extend each `layout.json` entry with a `launcher` string, filled at snapshot
 time from the index above. No process inspection. Entries without a launcher stay
 placement-only, exactly as today.
 
-### 3. Relaunch at login
+### 3. Login picker, then launch
 
-A new subcommand, `omarchy-gws-persist relaunch`, run once from the existing
-`hyprland.start` hook, **after** monitors and persistent workspaces exist
-(short delay, then verify `hyprctl monitors`).
+Nothing starts by itself. At login the user sees a picker listing the apps that
+were open last session, every entry **selected by default**, with a **Launch**
+button. The user deselects what they do not want this time and presses Launch.
 
-For each recorded class with a launcher:
+Flow, run once per login from the existing `hyprland.start` hook:
 
-1. Count current windows of that class. Launch only the missing ones
-   (`recorded count - running count`), so apps already started by autostart are
-   not duplicated.
-2. Launch via `hyprctl dispatch hl.dsp.exec_cmd(...)` or `setsid`, never through
-   a shell with unquoted user data.
-3. Stagger launches (about 0.5 s apart, tunable) and cap the total, so login
-   does not stampede.
-4. Do nothing further about placement. The existing `window.open` hook moves each
-   window to its recorded monitor and slot.
+1. After a short delay, wait until `hyprctl monitors` shows the recorded monitors
+   (or a timeout passes), so placement has somewhere to put windows.
+2. Build the list: one row per recorded window, `app name (monitor, slot)`, for
+   every entry that has a resolved launcher. Rows for apps that are **already
+   running** (started by autostart) are shown ticked-and-disabled as "running" and
+   are never launched twice. Unresolved apps are listed greyed out with the reason,
+   so nothing silently disappears.
+3. Show the picker. Escape or "Skip" launches nothing.
+4. On Launch, start the ticked rows one at a time, about 0.5 s apart, through
+   `hyprctl dispatch hl.dsp.exec_cmd(...)` (never a shell with unquoted data).
+   The existing `window.open` hook then moves each window to its recorded monitor
+   and slot.
+5. Remember the last selection only as a hint (rows the user unticked stay
+   unticked next login? **open question 1**).
 
-Single-instance apps (Discord, Vivaldi) ignore a second launch, so the
-count-based rule matters. Vivaldi's several windows and PWAs must be launched
-through their own `.desktop` entries, which is why the PWA host match in step 3
-of resolution is needed.
+Single-instance apps (Discord, Vivaldi) ignore a second launch, so launches are
+counted per class: `recorded - running`. Vivaldi's windows and PWAs launch through
+their own `.desktop` entries, which is why the PWA host match in the resolver is
+needed.
 
-### 4. Controls and safety
+**Picker UI.** Two options, in order of preference:
 
-- **Opt-in per app, default off for the first release.** `omarchy-global-workspaces
-  relaunch list|enable <class>|disable <class>`. A blanket "relaunch everything I
-  had open" is the second step, once the resolver is trusted.
-- Denylist by default: shells and terminals started by the user with arguments,
-  password managers, and anything unresolved.
-- **Dry run first**: `omarchy-gws-persist relaunch --dry-run` prints what it
-  would launch and why, and is the first thing to test live.
-- Never relaunch while the grace window logic could be confused: relaunch runs
-  once per login, guarded by the `session-start` stamp.
-- Never kill or move windows it did not open.
+- **A. Quickshell overlay in this plugin** (`overlay` plugin kind, `Overlay.qml`),
+  summoned with `omarchy-shell shell summon <id>`. It matches Omarchy's look and
+  can show per-row monitor and slot. It needs a second `kinds` entry and entry
+  point in `manifest.json`, which `omarchy plugin validate` must accept, and it is
+  the larger piece of work.
+- **B. Terminal fallback**: a floating `foot` running `gum choose --no-limit
+  --selected=...` (gum is already an Omarchy dependency), with Launch on Enter.
+  Small, testable without a compositor, and the fallback when the shell is not
+  running.
+
+Proposal: build B first (it fixes the data flow and tests), then A as the polished
+front end, both feeding the same `relaunch --apply <selection>` command.
+
+### 4. Safety
+
+- **Dry run**: `omarchy-gws-persist relaunch --dry-run` prints the list and the
+  command for each row, and launches nothing. First thing to test live.
+- The picker appears **only in Global Persisted mode** and **only once per login**
+  (guarded by the `session-start` stamp), not after every config reload.
+- A denylist hides apps that should never be offered: for example `win11-vm`
+  (side effects), shells started by the user with arguments, and anything the user
+  nulls out in `launchers.json`.
+- Never kills or moves windows it did not open.
 
 ### 5. Menu surface
 
-Same pattern as the mode entries: the plugin cannot add menu items, so the README
-gets a snippet for an optional `Trigger › Toggle › Workspace Mode › Relaunch
-apps` entry that runs `relaunch enable/disable`. The decision is stored in
-state, not in the menu file.
+The plugin cannot add menu items, so the README gets an optional snippet for
+`Trigger › Toggle › Workspace Mode › Relaunch picker now` (runs the picker on
+demand, useful for testing without rebooting). The persisted mode itself needs no
+new menu entry.
 
 ## Build order
 
@@ -123,13 +142,17 @@ state, not in the menu file.
    `omarchy-gws-persist launchers` printing a table of *window class → matched
    entry → command → confidence* for the windows open right now. No launching.
    Validate against real windows (Vivaldi PWAs, Discord, foot TUIs, Steam games).
-2. **Record launcher** in snapshots; migration: old `layout.json` entries without
-   the field keep working.
-3. **`relaunch --dry-run`**, then `relaunch` with the count rule, staggering and
-   the opt-in list.
-4. **Wire into `hyprland.start`** in the Lua template, behind Global Persisted
-   mode and the per-app opt-in.
-5. README and menu snippet.
+2. **Record launcher** in snapshots; old `layout.json` entries without the field
+   keep working.
+3. **`relaunch --dry-run`** and **`relaunch --apply <selection>`** with the
+   count rule, staggering and the denylist. No UI yet; selection is a list of ids.
+4. **Terminal picker (option B)** feeding `--apply`; on-demand menu entry for
+   testing.
+5. **Wire into `hyprland.start`** in the Lua template: wait for monitors, show
+   the picker once per login.
+6. **Quickshell overlay picker (option A)**, if the terminal picker proves the
+   flow.
+7. README and menu snippet.
 
 ## Tests (no compositor)
 
@@ -139,21 +162,26 @@ state, not in the menu file.
 - `Exec=` field-code stripping and quoting.
 - Relaunch count rule with a stub `hyprctl`: 2 recorded, 1 running, so exactly 1
   launch; none when all are running; none for unresolved or denied classes.
+- Selection: all rows ticked by default; unticking a row means it is not launched;
+  empty selection and Skip launch nothing.
+- Already-running rows are shown as running and never launched.
 - Dry run prints the plan and launches nothing.
-- Override file wins, and `null` excludes an app.
+- Override file wins, and `null` hides an app from the picker.
+- Picker is offered once per login, and not in plain Global or Local mode.
 
 ## Open questions
 
-1. Should relaunch be opt-in per app (safer, proposed) or all-or-nothing at first?
-2. Steam games and anything with side effects (VMs such as `win11-vm`): exclude by
-   default? Proposed: yes, via the denylist.
-3. Terminals (`foot` with a working directory): recreate the directory from the
-   recorded `.desktop` or window title, or skip? Proposed: skip in v1.
-4. Where should the user's override file live: under `~/.config/omarchy/` as
-   above, or inside the plugin's state directory?
+1. Should next login remember what was unticked, or always start with everything
+   ticked? You said default to all selected; proposed: always all ticked.
+2. Steam games and VMs (`win11-vm`): offer them in the picker like any other app
+   (ticked by default), or keep them on the denylist so they are never offered?
+   Proposed: denylist, since launching them has side effects.
+3. Terminals (`foot` with a working directory): offer in the picker, or skip in
+   v1? Proposed: skip in v1.
+4. Picker UI order: terminal picker first, Quickshell overlay second (proposed), or
+   overlay straight away?
 5. Should a user-extension `action` in `omarchy-menu.jsonc` count as a launcher
-   source in v1, or only `.desktop` entries? Proposed: `.desktop` first, menu
-   actions later.
+   source in v1, or only `.desktop` entries? Proposed: `.desktop` first.
 
 ## Known limits that remain
 
