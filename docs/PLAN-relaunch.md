@@ -21,12 +21,19 @@ at, not from guessing at process command lines.
    them if wanted.
 3. **foot terminals are kept.** They are offered like any other app (see "Terminals"
    below for what is and is not restored).
-4. **Only apps referenced by the Omarchy menu take part.** An app started by hand
-   from a terminal, with no `.desktop` entry and no menu action pointing at it, is
-   excluded from relaunch entirely: not offered, not greyed out, not launched.
+4. **Only apps referenced by the Omarchy menu take part, in every respect.** An
+   app started by hand from a terminal, with no `.desktop` entry and no menu
+   action pointing at it, is not recorded, not placed, not offered and not
+   launched. (This narrows what the recorder does today; see build order.)
 5. **The picker appears once per login, and only while Global Persisted is the
    selected mode.** Records must survive any period spent in Local or plain Global
    mode (next section).
+6. **Unticking is for this login only.** If you untick an app and press Launch, the
+   app is simply not started this time. Its record is kept (the recorder only adds
+   or updates records, never removes one because an app was not running), and next
+   login it is ticked again.
+7. **The picker is built from Omarchy's own menu** (`omarchy-menu-select`), not a
+   separate tool.
 
 ## Records survive other modes
 
@@ -151,20 +158,23 @@ counted per class: `recorded - running`. Vivaldi's windows and PWAs launch throu
 their own `.desktop` entries, which is why the PWA host match in the resolver is
 needed.
 
-**Picker UI.** Two options, in order of preference:
+**Picker UI: Omarchy's own menu.** Omarchy ships `omarchy menu select`
+(`omarchy-menu-select <prompt> [option...]`), a single-choice menu in the shell's
+own look, where an option may carry an icon glyph and a subtext. It has no
+multi-select, so the checklist is a loop around it:
 
-- **A. Quickshell overlay in this plugin** (`overlay` plugin kind, `Overlay.qml`),
-  summoned with `omarchy-shell shell summon <id>`. It matches Omarchy's look and
-  can show per-row monitor and slot. It needs a second `kinds` entry and entry
-  point in `manifest.json`, which `omarchy plugin validate` must accept, and it is
-  the larger piece of work.
-- **B. Terminal fallback**: a floating `foot` running `gum choose --no-limit
-  --selected=...` (gum is already an Omarchy dependency), with Launch on Enter.
-  Small, testable without a compositor, and the fallback when the shell is not
-  running.
+1. Show one row per app: a tick glyph (`☑`/`☐`) plus the app name, with the
+   monitor and slot as subtext, and two extra rows, **Launch** and **Skip**.
+2. Choosing an app row flips its tick and shows the menu again; choosing **Launch**
+   starts the ticked apps; **Skip** or Escape launches nothing.
+3. The loop state is a plain list in a temporary file, so the menu code stays a thin
+   wrapper over `relaunch --apply <ids>`.
 
-Proposal: build B first (it fixes the data flow and tests), then A as the polished
-front end, both feeding the same `relaunch --apply <selection>` command.
+Consequence to accept: each toggle closes and reopens the menu (a flicker). If
+that proves annoying, the menu's provider mechanism (`provider: "name"` returning
+JSON rows with `checked`) could allow an in-place checklist, but that needs a
+spike first and is not assumed. A custom Quickshell overlay and a gum-based picker
+are dropped from the plan, since the menu already exists.
 
 ### Terminals
 
@@ -207,17 +217,19 @@ new menu entry.
    `omarchy-gws-persist launchers` printing a table of *window class → matched
    entry → command → confidence* for the windows open right now. No launching.
    Validate against real windows (Vivaldi PWAs, Discord, foot TUIs, Steam games).
-2. **Record launcher** in snapshots; old `layout.json` entries without the field
-   keep working.
+2. **Record launcher and restrict the recorder to menu-referenced apps**
+   (decision 4): snapshots store each window's resolved launcher, and classes that
+   do not resolve are no longer recorded or placed. The first filtered snapshot
+   removes records of unresolved classes already in `layout.json`; these are the
+   only records ever dropped by a rule other than the unseen-for-N-logins prune.
+   Old entries without the field keep working until their class resolves.
 3. **`relaunch --dry-run`** and **`relaunch --apply <selection>`** with the
-   count rule, staggering and the denylist. No UI yet; selection is a list of ids.
-4. **Terminal picker (option B)** feeding `--apply`; on-demand menu entry for
-   testing.
+   count rule, staggering and the default-unticked list. No UI yet; selection is a list of ids.
+4. **Menu picker** (`omarchy-menu-select` loop) feeding `--apply`; plus an
+   on-demand menu entry to run it without rebooting, for testing.
 5. **Wire into `hyprland.start`** in the Lua template: wait for monitors, show
-   the picker once per login.
-6. **Quickshell overlay picker (option A)**, if the terminal picker proves the
-   flow.
-7. README and menu snippet.
+   the picker once per login, persisted mode only.
+6. README and menu snippet.
 
 ## Tests (no compositor)
 
@@ -239,22 +251,24 @@ new menu entry.
   dropped only after the persisted-login threshold.
 - Side-effect apps (Steam, VM) are listed unticked; ordinary apps are listed ticked;
   every selection starts from those defaults regardless of the previous login.
-- A class with no `.desktop` entry or menu action is not listed.
+- A class with no `.desktop` entry or menu action is not listed, not recorded and
+  not placed; its old record disappears at the first filtered snapshot.
+- Unticking an app at login leaves its record intact; the next login lists it
+  ticked again.
+- The menu loop: toggling flips a tick, Launch returns the ticked ids, Skip and
+  Escape return none (with `omarchy-menu-select` stubbed).
 - `forget` is the only command that removes records.
 
 ## Open questions
 
-1. **Recording versus relaunch for non-menu apps.** Decision 4 excludes them from
-   relaunch. Should they also stay out of `layout.json` (nothing recorded, nothing
-   placed), or still be recorded and placed when opened by hand, as today?
-   Proposed: keep recording and placing them (it is harmless and keeps hand-opened
-   windows where they were left), but never offer them in the picker.
-2. **Persisted-login threshold.** 60 persisted logins before an unseen entry is
-   dropped is a guess. Too short loses rarely used apps; too long keeps dead ones.
-3. **Picker UI order.** Terminal picker (gum in a floating foot) first, Quickshell
-   overlay second (proposed), or the overlay straight away?
-4. **Default-unticked list.** Is "Steam launches and VM launchers" the right
-   starting set?
+1. **Unseen-app cutoff.** If an app stops being used (say you stop running Discord),
+   its record is kept for a while and then forgotten, so dead apps do not linger
+   in the picker forever. I counted that in persisted logins (so time away in
+   another mode costs nothing) and guessed 60. Proposed: 60 as a named constant you
+   can change; say if you want it shorter or longer. This is separate from
+   unticking, which never affects records (decision 6).
+2. **In-place checklist.** Is the menu flicker on each toggle acceptable for v1, or
+   should a spike on the menu's `provider` mechanism come first?
 
 ## Known limits that remain
 
