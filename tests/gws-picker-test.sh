@@ -38,17 +38,17 @@ gws_persist_on
 
 # 1. Offers the launchable rows; ticks the default ones; side-effect Steam starts unticked.
 seed
-GWS_TEST_PICK='  3  │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
+GWS_TEST_PICK='3    │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
 grep -q 'IXION' "$TMP/gum.options" || fail "steam row is offered" "$(cat "$TMP/gum.options")"
 grep -q -- '--selected' "$TMP/gum.args" || fail "defaults are passed as --selected" "$(cat "$TMP/gum.args")"
-grep -q '3  │  DP-1     │  Vivaldi' "$TMP/gum.args" && grep -q '4  │  DP-2     │  Foot' "$TMP/gum.args" \
+grep -q '3    │  DP-1     │  Vivaldi' "$TMP/gum.args" && grep -q '4    │  DP-2     │  Foot' "$TMP/gum.args" \
   || fail "default rows are ticked" "$(cat "$TMP/gum.args")"
 if grep -q 'IXION' "$TMP/gum.args"; then fail "steam row is not ticked by default" "$(cat "$TMP/gum.args")"; fi
 pass "offers launchable rows; defaults ticked; side-effect row unticked"
 
 # 2. Ticking one vivaldi row: that row launches, the rest are dismissed from the record.
 seed
-GWS_TEST_PICK='  3  │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
+GWS_TEST_PICK='3    │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
 [[ $(gws_count exec_cmd) == 1 ]] || fail "one ticked row launches once" "$(cat "$LOG")"
 python3 - "$LAYOUT" <<'PY' || fail "unticked foot and steam dismissed; ticked row kept"
 import json, sys

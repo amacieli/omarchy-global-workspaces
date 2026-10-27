@@ -608,7 +608,7 @@ def picker_table():
     w_mon = max([len("Monitor")] + [len(c[1]) for c in cells])
     out, seen = [], {}
     for r, (aw, mon, app) in zip(rows, cells):
-        label = "%*s  \u2502  %-*s  \u2502  %s" % (w_aw, aw, w_mon, mon, app)
+        label = "%-*s  \u2502  %-*s  \u2502  %s" % (w_aw, aw, w_mon, mon, app)   # no leading spaces: gum trims them on the cursor row
         seen[label] = seen.get(label, 0) + 1
         if seen[label] > 1:
             label += " (%d)" % seen[label]

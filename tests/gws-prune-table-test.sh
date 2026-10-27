@@ -81,11 +81,11 @@ rec '{"vivaldi-stable":[{"monitor":"DP-1","slot":1,"floating":false,"seen":1,"la
  "foot":[{"monitor":"DP-2","slot":4,"floating":false,"seen":1,"launcher":"foot"}]}'
 gws_clients
 out=$(python3 "$ROOT/lib/gws.py" picker-options | cut -f2)
-exp=$'  4  │  DP-2      │  Foot\n  2  │  HDMI-A-1  │  Vivaldi\n  1  │  DP-1      │  Vivaldi'
+exp=$'4    │  DP-2      │  Foot\n2    │  HDMI-A-1  │  Vivaldi\n1    │  DP-1      │  Vivaldi'
 [[ $out == "$exp" ]] || fail "table order is DP-2, HDMI-A-1, DP-1" "$out"
 hdr=$(python3 "$ROOT/lib/gws.py" picker-header)
 [[ $hdr == "    AW#  │  Monitor   │  App" ]] || fail "header" "$hdr"
-printf '%s\n' "  2  │  HDMI-A-1  │  Vivaldi" | python3 "$ROOT/lib/gws.py" picker-ids | grep -qx 'vivaldi-stable#1' || fail "label maps back to its row"
+printf '%s\n' "2    │  HDMI-A-1  │  Vivaldi" | python3 "$ROOT/lib/gws.py" picker-ids | grep -qx 'vivaldi-stable#1' || fail "label maps back to its row"
 pass "checklist table is ordered left to right and maps labels back to rows"
 
 echo "ALL PASS: gws-prune-table"
