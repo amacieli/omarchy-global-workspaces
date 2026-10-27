@@ -270,18 +270,36 @@ def resolve_class(cls, ctx):
 
 # ── shutdown guard and monitor order ────────────────────────────────────────
 
+SHUTDOWN_JOB = re.compile(r"(reboot|poweroff|halt|kexec|shutdown)\.target")
+# A transient unit from `systemd-run ... <systemctl> reboot` carries its command
+# as the description: "[systemd-run] /usr/bin/systemctl reboot --no-wall".
+SHUTDOWN_TIMER = re.compile(r"\[systemd-run\].*\bsystemctl\s+(?:--\S+\s+)*(reboot|poweroff|halt|kexec)\b")
+
+
+def _systemctl(*args):
+    try:
+        return subprocess.run(["systemctl", *args], capture_output=True,
+                              text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
 def shutting_down():
-    """True while systemd has a reboot/poweroff/halt/kexec job queued. Windows
-    close during shutdown; the recorder must not read that as the user closing
-    the apps."""
+    """True when the machine is going down or is about to. Windows close during
+    shutdown; the recorder must not read that as the user closing the apps.
+
+    Two signals, because the Omarchy menu's reboot (omarchy-system-reboot)
+    queues the reboot behind a 2 s user timer and closes every window at once,
+    so for the first seconds systemd has no reboot job yet:
+      1. a reboot/poweroff/halt/kexec job queued in the system manager;
+      2. a pending user-manager transient unit whose command is
+         `systemctl reboot|poweroff|halt|kexec`."""
     if os.environ.get("GWS_SHUTDOWN") is not None:
         return os.environ["GWS_SHUTDOWN"] == "1"
-    try:
-        r = subprocess.run(["systemctl", "list-jobs", "--no-legend"],
-                           capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return re.search(r"(reboot|poweroff|halt|kexec|shutdown)\.target", r.stdout) is not None
+    if SHUTDOWN_JOB.search(_systemctl("list-jobs", "--no-legend")):
+        return True
+    return SHUTDOWN_TIMER.search(_systemctl(
+        "--user", "list-units", "--all", "--no-legend", "--no-pager", "run-*")) is not None
 
 
 MONITOR_POS = re.compile(r'output\s*=\s*"([^"]+)"[^}]*?position\s*=\s*"(-?\d+)x(-?\d+)"')
@@ -343,7 +361,15 @@ def cmd_snapshot():
         login = int(stamp) if stamp is not None else None
     except ValueError:
         login = None
-    leaving = shutting_down()
+    # Backstop for closes no shutdown signal announces (logout, a dying session,
+    # a close-all script): two or more classes of this login gone at once is a
+    # mass close, not the user quitting apps one by one. Keeping the records
+    # costs a stale row the user can untick; pruning on a false alarm costs the
+    # layout.
+    gone = [c for c, ws in entries.items()
+            if c not in current and login is not None
+            and any(w.get("seen", 0) >= login for w in ws)]
+    leaving = shutting_down() or len(gone) >= 2
 
     learned = dict(ctx["learned"])
     for cls in set(current) | set(entries):
