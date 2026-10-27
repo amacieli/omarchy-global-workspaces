@@ -102,6 +102,7 @@ gws_env() {
   export HOME="$TMP/home" XDG_STATE_HOME="$TMP/state"
   export GWS_DEBOUNCE=0 GWS_PLACE_DELAY=0 GWS_LAUNCH_STAGGER=0 GWS_NO_RELOAD=1
   export GWS_APP_DIRS="$TMP/apps"
+  export GWS_MONITORS_FILE="$TMP/no-monitors.lua" GWS_SHUTDOWN=0 GWS_PLACE_VERIFY=0
   STATE="$XDG_STATE_HOME/omarchy"
   DIR="$STATE/global-workspaces"
   LOG="$TMP/hyprctl.log"

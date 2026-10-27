@@ -7,7 +7,7 @@ Keys: ENTER, SPACE, CTRL_C, or literal text. Exit 0 = the status was printed, 3 
 """
 import fcntl, os, pty, select, struct, sys, termios, time
 
-KEYS = {"ENTER": "\r", "CTRL_C": "\x03"}
+KEYS = {"ENTER": "\r", "CTRL_C": "\x03", "DOWN": "\x1b[B"}
 PROMPT = b"Relaunch?"
 
 

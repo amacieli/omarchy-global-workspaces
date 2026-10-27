@@ -38,7 +38,7 @@ fi
 
 # Esc / Ctrl-C: gum exits non-zero, nothing is launched or dismissed.
 chosen=$(printf '%s\n' "${labels[@]}" | "$GUM" choose --no-limit --height 20 \
-  --header "Relaunch? x toggles, Enter launches, Esc leaves all as is" \
+  --header "$(printf 'Relaunch? x toggles, Enter launches, Esc leaves all\n\n%s' "$(python3 "$ROOT/lib/gws.py" picker-header)")" \
   "${selected[@]}") || exit 0
 
 if [[ -z $chosen ]]; then

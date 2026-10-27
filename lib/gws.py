@@ -33,6 +33,8 @@ PENDING_LOCK = os.path.join(DIR, "pending.lock")
 OVERRIDES = os.path.join(DIR, "launchers.json")
 LEARNED = os.path.join(DIR, "launchers-learned.json")
 BASES = os.path.join(STATE, "monitor-bases.json")
+PLACE_LOG = os.path.join(DIR, "place.log")
+MONITORS_LUA = os.environ.get("GWS_MONITORS_FILE") or os.path.join(HOME, ".config", "hypr", "monitors.lua")
 
 STRIDE = 10
 GRACE = 180          # s after session-start in which a class is never truncated
@@ -240,6 +242,9 @@ def resolve_class(cls, ctx):
         value = ctx["overrides"][cls]
         if value is None:
             return {"layer": "hidden", "command": None, "name": cls}
+        if isinstance(value, dict):          # {"command": ..., "name": ...}
+            return {"layer": "override", "command": str(value.get("command") or "") or None,
+                    "name": str(value.get("name") or cls)}
         return {"layer": "override", "command": str(value), "name": cls}
 
     known = ctx["learned"].get(cls)
@@ -261,6 +266,38 @@ def resolve_class(cls, ctx):
         app = cands[0]
         return {"layer": layer, "command": app["exec"], "name": app["name"], "id": app["id"], "learn": True}
     return {"layer": "none", "command": None, "name": cls}
+
+
+# ── shutdown guard and monitor order ────────────────────────────────────────
+
+def shutting_down():
+    """True while systemd has a reboot/poweroff/halt/kexec job queued. Windows
+    close during shutdown; the recorder must not read that as the user closing
+    the apps."""
+    if os.environ.get("GWS_SHUTDOWN") is not None:
+        return os.environ["GWS_SHUTDOWN"] == "1"
+    try:
+        r = subprocess.run(["systemctl", "list-jobs", "--no-legend"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return re.search(r"(reboot|poweroff|halt|kexec|shutdown)\.target", r.stdout) is not None
+
+
+MONITOR_POS = re.compile(r'output\s*=\s*"([^"]+)"[^}]*?position\s*=\s*"(-?\d+)x(-?\d+)"')
+
+
+def monitor_order():
+    """Monitor name -> x position, left to right. Source: the monitors setup file
+    (hypr/monitors.lua); monitors it does not place come from the live layout."""
+    xs = {}
+    text = read_text(MONITORS_LUA) or ""
+    text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("--"))
+    for name, x, _y in MONITOR_POS.findall(text):
+        xs[name] = int(x)
+    for m in hypr_json("monitors") or []:
+        xs.setdefault(m.get("name"), m.get("x", 0))
+    return xs
 
 
 # ── recorder ─────────────────────────────────────────────────────────────────
@@ -302,6 +339,12 @@ def cmd_snapshot():
             "seen": now,
         })
 
+    try:
+        login = int(stamp) if stamp is not None else None
+    except ValueError:
+        login = None
+    leaving = shutting_down()
+
     learned = dict(ctx["learned"])
     for cls in set(current) | set(entries):
         res = resolve_class(cls, ctx)
@@ -312,7 +355,20 @@ def cmd_snapshot():
             learned[cls] = {"id": res["id"]}
         if cls in current:
             wins, old = current[cls], entries.get(cls, [])
-            entries[cls] = wins + old[len(wins):] if in_grace and len(wins) < len(old) else wins
+            if in_grace and old:
+                # Just logged in: windows may still be on their way back, or may
+                # have landed wrong. Keep the recorded places; only add extras.
+                entries[cls] = old + wins[len(old):]
+            else:
+                entries[cls] = wins
+        elif login is not None and not leaving:
+            # Closed during this login (seen since login, gone now): the user
+            # closed it. Records from earlier logins that were never relaunched
+            # stay, and nothing is dropped while the machine is shutting down.
+            entries[cls] = [w for w in entries[cls] if w.get("seen", 0) < login]
+            if not entries[cls]:
+                del entries[cls]
+                continue
         for w in entries[cls]:
             w["launcher"] = res["command"]
 
@@ -322,6 +378,16 @@ def cmd_snapshot():
 
 
 # ── placement: only for windows the login picker started ────────────────────
+
+def log_place(msg):
+    try:
+        if os.path.exists(PLACE_LOG) and os.path.getsize(PLACE_LOG) > 100_000:
+            os.rename(PLACE_LOG, PLACE_LOG + ".old")
+        with open(PLACE_LOG, "a") as f:
+            f.write("%s %s\n" % (time.strftime("%F %T"), msg))
+    except OSError:
+        pass
+
 
 def cmd_place(addr):
     if not addr or not persisted():
@@ -358,8 +424,20 @@ def cmd_place(addr):
         return
     target = int(bases[mon]) + int(want["slot"])
     sel = 'window = "address:%s"' % addr
+    log_place("%s %s: want %s slot %s (workspace %d), opened on workspace %s"
+              % (addr, me["class"], mon, want["slot"], target, me["workspace"]["id"]))
     if me["workspace"]["id"] != target:
         dispatch('hl.dsp.window.move({ workspace = "%d", follow = false, %s })' % (target, sel))
+    # Hyprland or the app can still shuffle a new window after it opens: look again
+    # and put it back, so a late move cannot leave it on the wrong monitor.
+    for _ in range(int(os.environ.get("GWS_PLACE_VERIFY", "3"))):
+        time.sleep(float(os.environ.get("GWS_PLACE_VERIFY_DELAY", "1")))
+        now = next((c for c in (hypr_json("clients") or []) if c.get("address") == addr), None)
+        if not now:
+            break
+        if now["workspace"]["id"] != target:
+            log_place("%s %s: found on workspace %s, moving to %d" % (addr, me["class"], now["workspace"]["id"], target))
+            dispatch('hl.dsp.window.move({ workspace = "%d", follow = false, %s })' % (target, sel))
     if want.get("floating") and want.get("at") and want.get("size"):
         if not me.get("floating"):
             dispatch('hl.dsp.window.float({ action = "enable", %s })' % sel)
@@ -516,25 +594,48 @@ def cmd_launchers(unresolved_only):
         print("%s\t%s\t%s\t%s" % (cls, res["layer"], res.get("name", ""), detail))
 
 
-def picker_label(r):
-    """One checklist line. The row id sits last in brackets; commas are replaced
-    because gum splits its --selected list on them."""
-    return ("%s - %s slot %s  [%s]" % (r["name"], r["monitor"], r["slot"], r["id"])).replace(",", ";")
+def picker_table():
+    """The login checklist as a table, left to right by physical monitor, then
+    by AW slot. Returns (header, [(default, label, row_id)]). Labels carry no
+    row id: picker-ids maps a ticked label back to its row."""
+    rows = [r for r in build_rows() if r["state"] == "launch"]
+    xs = monitor_order()
+    far = 10 ** 9
+    rows.sort(key=lambda r: (xs.get(r["monitor"], far), str(r["monitor"]), int(r["slot"] or 0), r["name"], r["index"]))
+    clean = lambda t: str(t).replace(",", ";")     # gum splits --selected on commas
+    cells = [(str(r["slot"]), clean(r["monitor"]), clean(r["name"]) + ("  (Steam/VM)" if r["side_effect"] else "")) for r in rows]
+    w_aw = max([len("AW#")] + [len(c[0]) for c in cells])
+    w_mon = max([len("Monitor")] + [len(c[1]) for c in cells])
+    out, seen = [], {}
+    for r, (aw, mon, app) in zip(rows, cells):
+        label = "%*s  \u2502  %-*s  \u2502  %s" % (w_aw, aw, w_mon, mon, app)
+        seen[label] = seen.get(label, 0) + 1
+        if seen[label] > 1:
+            label += " (%d)" % seen[label]
+        out.append((1 if r["default"] else 0, label, r["id"]))
+    header = "%-*s  \u2502  %-*s  \u2502  %s" % (w_aw, "AW#", w_mon, "Monitor", "App")
+    return header, out
 
 
 def cmd_picker_options():
     """Lines of 'DEFAULT<TAB>LABEL' for the launchable rows (open rows are not offered)."""
-    for r in build_rows():
-        if r["state"] == "launch":
-            print("%d\t%s" % (1 if r["default"] else 0, picker_label(r)))
+    for default, label, _id in picker_table()[1]:
+        print("%d\t%s" % (default, label))
+
+
+def cmd_picker_header():
+    """Column header, indented to sit over the label text gum draws after its
+    cursor and tick marker."""
+    print("    " + picker_table()[0])
 
 
 def cmd_picker_ids():
     """Reads the ticked labels on stdin and prints their row ids."""
+    ids = {label: rid for _d, label, rid in picker_table()[1]}
     for line in sys.stdin:
-        m = re.search(r"\[([^\]]+)\]\s*$", line)
-        if m:
-            print(m.group(1))
+        rid = ids.get(line.rstrip("\n"))
+        if rid:
+            print(rid)
 
 
 def main(argv):
@@ -557,6 +658,8 @@ def main(argv):
         return cmd_relaunch(args)
     elif cmd == "picker-options":
         cmd_picker_options()
+    elif cmd == "picker-header":
+        cmd_picker_header()
     elif cmd == "picker-ids":
         cmd_picker_ids()
     else:
