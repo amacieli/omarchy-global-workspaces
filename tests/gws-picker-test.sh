@@ -38,17 +38,17 @@ gws_persist_on
 
 # 1. Offers the launchable rows; ticks the default ones; side-effect Steam starts unticked.
 seed
-GWS_TEST_PICK='3    │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
+GWS_TEST_PICK='3          │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
 grep -q 'IXION' "$TMP/gum.options" || fail "steam row is offered" "$(cat "$TMP/gum.options")"
 grep -q -- '--selected' "$TMP/gum.args" || fail "defaults are passed as --selected" "$(cat "$TMP/gum.args")"
-grep -q '3    │  DP-1     │  Vivaldi' "$TMP/gum.args" && grep -q '4    │  DP-2     │  Foot' "$TMP/gum.args" \
+grep -q '3          │  DP-1     │  Vivaldi' "$TMP/gum.args" && grep -q '4          │  DP-2     │  Foot' "$TMP/gum.args" \
   || fail "default rows are ticked" "$(cat "$TMP/gum.args")"
 if grep -q 'IXION' "$TMP/gum.args"; then fail "steam row is not ticked by default" "$(cat "$TMP/gum.args")"; fi
 pass "offers launchable rows; defaults ticked; side-effect row unticked"
 
 # 2. Ticking one vivaldi row: that row launches, the rest are dismissed from the record.
 seed
-GWS_TEST_PICK='3    │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
+GWS_TEST_PICK='3          │  DP-1     │  Vivaldi\n' "$PICKER" >/dev/null
 [[ $(gws_count exec_cmd) == 1 ]] || fail "one ticked row launches once" "$(cat "$LOG")"
 python3 - "$LAYOUT" <<'PY' || fail "unticked foot and steam dismissed; ticked row kept"
 import json, sys
@@ -94,19 +94,19 @@ assert "steam_app_1113120" not in e and len(e["vivaldi-stable"]) == 2 and "foot"
 PY
 pass "pty (real gum): Enter launches the defaults and dismisses the rest"
 
-# 7. The real gum: the first row is the unticked Steam row; DOWN moves to Vivaldi DP-1 slot 3, x unticks it, Enter launches what is left.
+# 7. The real gum: the first row is the unticked Steam row; DOWN moves to Vivaldi DP-2 slot 2, x unticks it, Enter launches what is left.
 seed
 rc=$(GWS_GUM=/usr/bin/gum python3 "$HERE/gws-pty.py" "$PICKER" DOWN x ENTER)
 [[ $rc == 0 ]] || fail "pty: space+enter exits 0" "rc=$rc"
 [[ $(gws_count exec_cmd) == 2 ]] || fail "pty: one untick leaves 2 launches" "$(cat "$LOG")"
-python3 - "$LAYOUT" <<'PY' || fail "pty: the cursor row (Vivaldi, DP-1 slot 3) dismissed"
+python3 - "$LAYOUT" <<'PY' || fail "pty: the cursor row (Vivaldi, DP-2 slot 2) dismissed"
 import json, sys
 e = json.load(open(sys.argv[1]))["entries"]
 assert "steam_app_1113120" not in e and "foot" in e, e
-assert [w["monitor"] for w in e["vivaldi-stable"]] == ["DP-2"], e
+assert [w["monitor"] for w in e["vivaldi-stable"]] == ["DP-1"], e
 PY
 grep -q 'exec_cmd("foot")' "$LOG" || fail "pty: the ticked foot row is launched"
-[[ $(grep -c 'exec_cmd("vivaldi-stable")' "$LOG" || true) == 1 ]] || fail "pty: only the DP-2 vivaldi row launches"
+[[ $(grep -c 'exec_cmd("vivaldi-stable")' "$LOG" || true) == 1 ]] || fail "pty: only the DP-1 vivaldi row launches"
 pass "pty (real gum): x unticks the cursor row, Enter launches the rest"
 
 # 8. The real gum: Ctrl-C leaves everything alone.

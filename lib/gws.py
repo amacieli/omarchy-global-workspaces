@@ -594,27 +594,70 @@ def cmd_launchers(unresolved_only):
         print("%s\t%s\t%s\t%s" % (cls, res["layer"], res.get("name", ""), detail))
 
 
-def picker_table():
-    """The login checklist as a table, left to right by physical monitor, then
-    by AW slot. Returns (header, [(default, label, row_id)]). Labels carry no
-    row id: picker-ids maps a ticked label back to its row."""
-    rows = [r for r in build_rows() if r["state"] == "launch"]
-    xs = monitor_order()
-    far = 10 ** 9
-    rows.sort(key=lambda r: (xs.get(r["monitor"], far), str(r["monitor"]), int(r["slot"] or 0), r["name"], r["index"]))
-    clean = lambda t: str(t).replace(",", ";")     # gum splits --selected on commas
-    cells = [(str(r["slot"]), clean(r["monitor"]), clean(r["name"]) + ("  (Steam/VM)" if r["side_effect"] else "")) for r in rows]
-    w_aw = max([len("AW#")] + [len(c[0]) for c in cells])
-    w_mon = max([len("Monitor")] + [len(c[1]) for c in cells])
-    out, seen = [], {}
-    for r, (aw, mon, app) in zip(rows, cells):
-        label = "%-*s  \u2502  %-*s  \u2502  %s" % (w_aw, aw, w_mon, mon, app)   # no leading spaces: gum trims them on the cursor row
+def monitor_labels():
+    """Connector -> 'Make Model (CONNECTOR)' for connected monitors; others show the connector."""
+    out = {}
+    for m in hypr_json("monitors") or []:
+        name, make = m.get("name"), (m.get("make") or "").strip()
+        model = " ".join(t for t in (m.get("model") or "").split() if not t.startswith("*"))
+        word = make.split()[0] if make else ""
+        if word and model.lower().startswith(word.lower()):
+            model = model[len(word):].strip()
+        text = " ".join(t for t in (word.title() if word.isupper() else word, model) if t)
+        out[name] = "%s (%s)" % (text, name) if text else name
+    return out
+
+
+def format_table(rows):
+    """rows: [(workspace, monitor_label, app)] -> (header, [label]). Workspace is
+    left-aligned: gum trims leading spaces on its cursor row."""
+    clean = lambda t: str(t).replace(",", ";")      # gum splits --selected on commas
+    cells = [(str(w), clean(m), clean(a)) for w, m, a in rows]
+    w1 = max([len("Workspace")] + [len(c[0]) for c in cells])
+    w2 = max([len("Monitor")] + [len(c[1]) for c in cells])
+    labels, seen = [], {}
+    for a, b, c in cells:
+        label = "%-*s  \u2502  %-*s  \u2502  %s" % (w1, a, w2, b, c)
         seen[label] = seen.get(label, 0) + 1
         if seen[label] > 1:
             label += " (%d)" % seen[label]
-        out.append((1 if r["default"] else 0, label, r["id"]))
-    header = "%-*s  \u2502  %-*s  \u2502  %s" % (w_aw, "AW#", w_mon, "Monitor", "App")
-    return header, out
+        labels.append(label)
+    return "%-*s  \u2502  %-*s  \u2502  %s" % (w1, "Workspace", w2, "Monitor", "App"), labels
+
+
+def picker_table():
+    """The login checklist: Workspace (AW slot) first, then monitor left to right by
+    the monitors setup file. Returns (header, [(default, label, row_id)]). Labels
+    carry no row id: picker-ids maps a ticked label back to its row."""
+    rows = [r for r in build_rows() if r["state"] == "launch"]
+    xs, names = monitor_order(), monitor_labels()
+    far = 10 ** 9
+    rows.sort(key=lambda r: (int(r["slot"] or 0), xs.get(r["monitor"], far), str(r["monitor"]), r["name"], r["index"]))
+    header, labels = format_table([(r["slot"], names.get(r["monitor"], r["monitor"]),
+                                    r["name"] + ("  (Steam/VM)" if r["side_effect"] else "")) for r in rows])
+    return header, [(1 if r["default"] else 0, l, r["id"]) for r, l in zip(rows, labels)]
+
+
+def cmd_current():
+    """Windows open right now as the plugin sees them: workspace slot, monitor, app."""
+    clients, bases = hypr_json("clients") or [], load_json(BASES, {})
+    owner = {int(b): n for n, b in bases.items()}
+    xs, names, ctx = monitor_order(), monitor_labels(), load_ctx()
+    far = 10 ** 9
+    rows = []
+    for c in clients:
+        ws = c["workspace"]["id"]
+        if not c.get("mapped", True) or c.get("hidden") or not c.get("class") or ws <= 0:
+            continue
+        mon = owner.get(((ws - 1) // STRIDE) * STRIDE, c.get("monitor"))
+        res = resolve_class(c["class"], ctx)
+        name = res["name"] if res.get("id") or res["layer"] == "override" else c["class"]
+        rows.append(((ws - 1) % STRIDE + 1, xs.get(mon, far), names.get(mon, mon), name, ws))
+    rows.sort(key=lambda r: r[:4])
+    header, labels = format_table([(r[0], r[2], r[3]) for r in rows])
+    print(header)
+    for l in labels:
+        print(l)
 
 
 def cmd_picker_options():
@@ -658,6 +701,8 @@ def main(argv):
         return cmd_relaunch(args)
     elif cmd == "picker-options":
         cmd_picker_options()
+    elif cmd == "current":
+        cmd_current()
     elif cmd == "picker-header":
         cmd_picker_header()
     elif cmd == "picker-ids":
