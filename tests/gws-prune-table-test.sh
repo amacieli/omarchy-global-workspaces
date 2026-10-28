@@ -70,7 +70,7 @@ grep -q '"launcher": "/opt/omalook/omalook"' "$LAYOUT" || fail "OmaLook launcher
 pass "launchers.json: OmaLook is recorded, non-app classes hidden"
 rm -f "$DIR/launchers.json"
 
-# f. table: left to right by monitors.lua, then AW#; header; no row ids in labels
+# f. checklist rows: by workspace slot, then left to right by monitors.lua
 cat > "$GWS_MONITORS_FILE" <<'LUA'
 -- hl.monitor({ output = "HDMI-A-1", position = "99x0" })
 hl.monitor({ output = "DP-2",    mode = "a", position = "0x0",    scale = 1 })
@@ -80,12 +80,8 @@ LUA
 rec '{"vivaldi-stable":[{"monitor":"DP-1","slot":1,"floating":false,"seen":1,"launcher":"v"},{"monitor":"HDMI-A-1","slot":2,"floating":false,"seen":1,"launcher":"v"}],
  "foot":[{"monitor":"DP-2","slot":4,"floating":false,"seen":1,"launcher":"foot"}]}'
 gws_clients
-out=$(python3 "$ROOT/lib/gws.py" picker-options | cut -f2)
-exp=$'1          │  DP-1      │  Vivaldi\n2          │  HDMI-A-1  │  Vivaldi\n4          │  DP-2      │  Foot'
-[[ $out == "$exp" ]] || fail "table order: workspace first, then monitor" "$out"
-hdr=$(python3 "$ROOT/lib/gws.py" picker-header)
-[[ $hdr == "    Workspace  │  Monitor   │  App" ]] || fail "header" "$hdr"
-printf '%s\n' "2          │  HDMI-A-1  │  Vivaldi" | python3 "$ROOT/lib/gws.py" picker-ids | grep -qx 'vivaldi-stable#1' || fail "label maps back to its row"
-pass "checklist table is ordered by workspace, then left to right and maps labels back to rows"
+out=$(python3 "$ROOT/lib/gws.py" picker-json | python3 -c 'import json,sys; print(" ".join(r["id"] for r in json.load(sys.stdin)["rows"]))')
+[[ $out == "vivaldi-stable#0 vivaldi-stable#1 foot#0" ]] || fail "table order: workspace first, then monitor" "$out"
+pass "checklist rows are ordered by workspace slot, then left to right"
 
 echo "ALL PASS: gws-prune-table"

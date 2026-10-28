@@ -88,7 +88,7 @@ While this mode is on, Hyprland events run `bin/omarchy-gws-persist`:
 
 - **Recording** (debounced, on window open/move/focus): per app class, the monitor *name*, slot 1–10, floating state and geometry go to `~/.local/state/omarchy/global-workspaces/layout.json`.
 - **Restoring**: when a window of a recorded class opens (for example from autostart after login), it is moved to its recorded monitor and slot. The n-th window of a class takes the n-th recorded entry. Floating windows also get their position and size back.
-- **Relaunching at login.** Once per login, a few seconds after Hyprland starts, a checklist opens in a foot window (`bin/omarchy-gws-picker`, built on `gum`). It lists the recorded apps that are not open yet: ticked by default, except apps with side effects such as Steam games and VMs. Enter launches the ticked apps and dismisses the rest from the record; Esc or Ctrl-C leaves everything as it was. Launching with nothing ticked asks for confirmation first. A dismissed app comes back only when you launch it by hand, because the recorder then records it again. Plan: [docs/PLAN-relaunch.md](docs/PLAN-relaunch.md).
+- **Relaunching at login.** Once per login, a few seconds after Hyprland starts, a checklist opens as a card over the middle-most monitor, drawn like the Omarchy menu (`picker/Picker.qml`, a shell overlay summoned by `bin/omarchy-gws-summon`). It lists the recorded apps that are not open yet: ticked by default, except apps with side effects such as Steam games and VMs. Enter launches the ticked apps and dismisses the rest from the record; Esc, Skip or a click outside the card leaves everything as it was. Launching with nothing ticked asks for confirmation first. A dismissed app comes back only when you launch it by hand, because the recorder then records it again. Plan: [docs/PLAN-relaunch.md](docs/PLAN-relaunch.md).
 - **Tiled order is not restored.** Tiled windows land on the right monitor and slot; their order within the workspace follows the order the apps open.
 - **What gets dropped.** An app seen open during this login and gone now was closed by you, so its record goes at the next snapshot (the recorder also runs on window close). Nothing is dropped while systemd has a reboot, poweroff, halt or kexec job queued, so closing windows at shutdown cannot erase the layout. Records from earlier logins that were never relaunched stay until the checklist dismisses them or `forget` removes them; they are never pruned by age. For the first 3 minutes after login the recorded monitor and slot of a class are kept, so an app that lands in the wrong place while the session starts does not overwrite its record. One `layout.json.bak` is kept per login, taken before the first change.
 - **Checklist table.** Columns `Workspace` (AW slot, primary sort), `Monitor` (make, model and connector; secondary sort left to right by the positions in `~/.config/hypr/monitors.lua`, monitors not listed there use their live x position and go last), `App` (one name per row). `lib/gws.py current` prints the same table for the windows open now. Place attempts are logged in `place.log` in the state directory; a window found on the wrong workspace within 3 s of opening is moved back.
@@ -103,10 +103,10 @@ While this mode is on, Hyprland events run `bin/omarchy-gws-persist`:
 ```jsonc
 "trigger.toggle.workspace-mode.relaunch": { "icon": "󰑓", "label": "Relaunch picker now",
   "when": "[[ $(omarchy-global-workspaces mode) == persisted ]]",
-  "action": "foot -a gws-picker -T 'Global workspaces: relaunch' -e omarchy-global-workspaces relaunch" }
+  "action": "omarchy-global-workspaces relaunch" }
 ```
 
-The picker is a foot window, not a menu row, because Omarchy's menu closes on every selection and cannot keep a checklist open.
+Preview the card without touching your session: `dev/preview.sh`.
 
 
 ## Uninstall

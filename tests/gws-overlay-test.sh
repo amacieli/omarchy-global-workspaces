@@ -127,4 +127,13 @@ for key in ("barWidget", "overlay"):
 PY
 pass "manifest: bar-widget + overlay, entry points exist"
 
+# 7. The on-demand route: only in persisted mode, and it summons the overlay with showEmpty.
+rm -f "$DIR/persisted" "$TMP/shell.calls"
+rc=0; "$ROOT/bin/omarchy-global-workspaces" relaunch >/dev/null 2>&1 || rc=$?
+[[ $rc == 1 && ! -e $TMP/shell.calls ]] || fail "relaunch refuses outside persisted mode" "rc=$rc"
+"$ROOT/bin/omarchy-global-workspaces" persisted >/dev/null
+PATH="$TMP/bin:$PATH" "$ROOT/bin/omarchy-global-workspaces" relaunch >/dev/null
+grep -q "shell summon $ID {\"showEmpty\":true}" "$TMP/shell.calls" || fail "relaunch summons the overlay" "$(cat "$TMP/shell.calls")"
+pass "relaunch route: persisted mode only, summons the overlay"
+
 echo "ALL PASS: gws-overlay"

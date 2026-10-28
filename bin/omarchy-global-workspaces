@@ -78,6 +78,7 @@ case "${1:-}" in
     ;;
   status) is_on && echo on || echo off ;;
   forget) shift; exec "$ROOT/bin/omarchy-gws-persist" forget "$@" ;;
-  relaunch) exec "$ROOT/bin/omarchy-gws-picker" ;;
+  relaunch) is_persisted || { echo "relaunch needs Global Persisted mode" >&2; exit 1; }
+            exec omarchy-shell shell summon io.github.amacieli.global-workspaces '{"showEmpty":true}' ;;
   *) usage; exit 1 ;;
 esac

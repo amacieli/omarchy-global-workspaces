@@ -635,10 +635,8 @@ def monitor_labels():
 
 
 def format_table(rows):
-    """rows: [(workspace, monitor_label, app)] -> (header, [label]). Workspace is
-    left-aligned: gum trims leading spaces on its cursor row."""
-    clean = lambda t: str(t).replace(",", ";")      # gum splits --selected on commas
-    cells = [(str(w), clean(m), clean(a)) for w, m, a in rows]
+    """rows: [(workspace, monitor_label, app)] -> (header, [label]), for `current`."""
+    cells = [(str(w), str(m), str(a)) for w, m, a in rows]
     w1 = max([len("Workspace")] + [len(c[0]) for c in cells])
     w2 = max([len("Monitor")] + [len(c[1]) for c in cells])
     labels, seen = [], {}
@@ -659,15 +657,6 @@ def picker_rows():
     far = 10 ** 9
     rows.sort(key=lambda r: (int(r["slot"] or 0), xs.get(r["monitor"], far), str(r["monitor"]), r["name"], r["index"]))
     return rows
-
-
-def picker_table():
-    """The gum checklist: returns (header, [(default, label, row_id)]). Labels
-    carry no row id: picker-ids maps a ticked label back to its row."""
-    rows, names = picker_rows(), monitor_labels()
-    header, labels = format_table([(r["slot"], names.get(r["monitor"], r["monitor"]),
-                                    r["name"] + ("  (Steam/VM)" if r["side_effect"] else "")) for r in rows])
-    return header, [(1 if r["default"] else 0, l, r["id"]) for r, l in zip(rows, labels)]
 
 
 def cmd_current():
@@ -692,12 +681,6 @@ def cmd_current():
         print(l)
 
 
-def cmd_picker_options():
-    """Lines of 'DEFAULT<TAB>LABEL' for the launchable rows (open rows are not offered)."""
-    for default, label, _id in picker_table()[1]:
-        print("%d\t%s" % (default, label))
-
-
 def cmd_picker_json():
     """The overlay checklist's rows as JSON: ids come straight from the rows, so no
     label has to be mapped back. Rows that are already open are not offered."""
@@ -711,21 +694,6 @@ def cmd_picker_json():
         "sideEffect": r["side_effect"],
         "on": r["default"],
     } for r in picker_rows()]}))
-
-
-def cmd_picker_header():
-    """Column header, indented to sit over the label text gum draws after its
-    cursor and tick marker."""
-    print("    " + picker_table()[0])
-
-
-def cmd_picker_ids():
-    """Reads the ticked labels on stdin and prints their row ids."""
-    ids = {label: rid for _d, label, rid in picker_table()[1]}
-    for line in sys.stdin:
-        rid = ids.get(line.rstrip("\n"))
-        if rid:
-            print(rid)
 
 
 def main(argv):
@@ -746,16 +714,10 @@ def main(argv):
         print(json.dumps(resolve_class(args[0] if args else "", load_ctx()), indent=2))
     elif cmd == "relaunch":
         return cmd_relaunch(args)
-    elif cmd == "picker-options":
-        cmd_picker_options()
     elif cmd == "current":
         cmd_current()
     elif cmd == "picker-json":
         cmd_picker_json()
-    elif cmd == "picker-header":
-        cmd_picker_header()
-    elif cmd == "picker-ids":
-        cmd_picker_ids()
     else:
         print("usage: gws.py snapshot|place ADDR|session-start|show|forget [CLASS]|launchers [--unresolved]|resolve CLASS|relaunch ...", file=sys.stderr)
         return 1

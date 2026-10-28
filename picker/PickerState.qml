@@ -3,7 +3,7 @@ import Quickshell.Io
 
 // Non-visual state for the login checklist: the rows, which are ticked, and the
 // two backend calls. All data comes from lib/gws.py (picker-json) and is applied
-// through bin/omarchy-gws-persist (relaunch --apply), exactly as the gum picker did.
+// through bin/omarchy-gws-persist (relaunch --apply).
 Item {
   id: state
   visible: false
