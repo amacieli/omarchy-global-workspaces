@@ -5,9 +5,15 @@
   "version": "0.1.0",
   "author": "Adam Macielinski",
   "license": "MIT",
-  "description": "One workspace row for every monitor: switch slot N on all monitors at once.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "description": "One workspace row for every monitor: switch slot N on all monitors at once. Global Persisted mode adds a login checklist to relaunch your apps.",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "overlay": "picker/Picker.qml"
+  },
   "barWidget": {
     "displayName": "Global Workspaces",
     "description": "Workspace slot indicators that follow global workspace mode",

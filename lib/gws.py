@@ -651,14 +651,20 @@ def format_table(rows):
     return "%-*s  \u2502  %-*s  \u2502  %s" % (w1, "Workspace", w2, "Monitor", "App"), labels
 
 
-def picker_table():
-    """The login checklist: Workspace (AW slot) first, then monitor left to right by
-    the monitors setup file. Returns (header, [(default, label, row_id)]). Labels
-    carry no row id: picker-ids maps a ticked label back to its row."""
+def picker_rows():
+    """The launchable rows in checklist order: Workspace (AW slot) first, then
+    monitor left to right by the monitors setup file."""
     rows = [r for r in build_rows() if r["state"] == "launch"]
-    xs, names = monitor_order(), monitor_labels()
+    xs = monitor_order()
     far = 10 ** 9
     rows.sort(key=lambda r: (int(r["slot"] or 0), xs.get(r["monitor"], far), str(r["monitor"]), r["name"], r["index"]))
+    return rows
+
+
+def picker_table():
+    """The gum checklist: returns (header, [(default, label, row_id)]). Labels
+    carry no row id: picker-ids maps a ticked label back to its row."""
+    rows, names = picker_rows(), monitor_labels()
     header, labels = format_table([(r["slot"], names.get(r["monitor"], r["monitor"]),
                                     r["name"] + ("  (Steam/VM)" if r["side_effect"] else "")) for r in rows])
     return header, [(1 if r["default"] else 0, l, r["id"]) for r, l in zip(rows, labels)]
@@ -690,6 +696,21 @@ def cmd_picker_options():
     """Lines of 'DEFAULT<TAB>LABEL' for the launchable rows (open rows are not offered)."""
     for default, label, _id in picker_table()[1]:
         print("%d\t%s" % (default, label))
+
+
+def cmd_picker_json():
+    """The overlay checklist's rows as JSON: ids come straight from the rows, so no
+    label has to be mapped back. Rows that are already open are not offered."""
+    names = monitor_labels()
+    print(json.dumps({"rows": [{
+        "id": r["id"],
+        "workspace": r["slot"],
+        "monitor": names.get(r["monitor"], r["monitor"]),
+        "connected": r["connected"],
+        "app": r["name"],
+        "sideEffect": r["side_effect"],
+        "on": r["default"],
+    } for r in picker_rows()]}))
 
 
 def cmd_picker_header():
@@ -729,6 +750,8 @@ def main(argv):
         cmd_picker_options()
     elif cmd == "current":
         cmd_current()
+    elif cmd == "picker-json":
+        cmd_picker_json()
     elif cmd == "picker-header":
         cmd_picker_header()
     elif cmd == "picker-ids":

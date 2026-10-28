@@ -141,11 +141,11 @@ luac -p "$TMP/ws.lua" || fail "rendered Lua template parses"
 
 rm -f "$DIR/persisted"
 out=$(lua_hook)
-[[ -z $(grep -F 'omarchy-gws-picker' <<<"$out") ]] || fail "hook: no picker outside persisted mode" "$out"
+[[ -z $(grep -F 'omarchy-gws-summon' <<<"$out") ]] || fail "hook: no checklist outside persisted mode" "$out"
 touch "$DIR/persisted"
 out=$(lua_hook)
-grep -q 'omarchy-gws-picker' <<<"$out" || fail "hook: picker starts at hyprland.start in persisted mode" "$out"
-grep -q 'sleep 4' <<<"$out" || fail "hook: picker waits before it opens" "$out"
+grep -q 'omarchy-gws-summon' <<<"$out" || fail "hook: checklist is summoned at hyprland.start in persisted mode" "$out"
+[[ -z $(grep -F 'foot' <<<"$out") ]] || fail "hook: no terminal window any more" "$out"
 grep -q 'session-start' <<<"$out" || fail "hook: session-start still runs" "$out"
 pass "login hook: picker runs once per start, persisted mode only, after session-start"
 

@@ -1,0 +1,36 @@
+#!/bin/bash
+# omarchy-gws-summon — open the login checklist overlay (picker/Picker.qml) in the
+# Omarchy shell. Called once per login by the hyprland.start hook in persisted mode.
+#
+# The shell starts at the same moment as the hook, so wait: a short settle delay (the
+# session's own autostart windows should be open before the checklist is drawn), then
+# poll the shell's IPC until it answers, then summon. Gives up quietly after ~40 s.
+#
+# Test overrides: GWS_SHELL_CMD (omarchy-shell), GWS_SUMMON_DELAY, GWS_SUMMON_TRIES,
+# GWS_SUMMON_WAIT.
+set -u
+
+DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/global-workspaces"
+ID="io.github.amacieli.global-workspaces"
+SHELL_CMD=${GWS_SHELL_CMD:-omarchy-shell}
+TRIES=${GWS_SUMMON_TRIES:-40}
+WAIT=${GWS_SUMMON_WAIT:-1}
+
+[[ -f $DIR/persisted ]] || exit 0
+
+log() { mkdir -p "$DIR"; printf '%s %s\n' "$(date +%T)" "$1" >> "$DIR/summon.log"; }
+
+sleep "${GWS_SUMMON_DELAY:-4}"
+
+for ((i = 0; i < TRIES; i++)); do
+  [[ $("$SHELL_CMD" shell ping 2>/dev/null) == ok ]] && break
+  sleep "$WAIT"
+done
+
+# 'unknown' means the shell is up but has not loaded the plugin yet: retry a few times.
+for ((i = 0; i < TRIES; i++)); do
+  if [[ $("$SHELL_CMD" shell summon "$ID" '{}' 2>/dev/null) == ok ]]; then exit 0; fi
+  sleep "$WAIT"
+done
+log "could not summon $ID: shell not ready, or the plugin is not enabled"
+exit 1

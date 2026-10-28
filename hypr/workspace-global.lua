@@ -371,11 +371,11 @@ do
     end
     hl.on("hyprland.start", function()
       run("session-start")
-      -- Login checklist: once per login, a few seconds after start so the
-      -- session's own autostart windows are already open when it is drawn.
+      -- Login checklist: once per login. The summon script waits for the shell
+      -- (and a few seconds for the session's own autostart windows), then opens
+      -- the overlay card from picker/Picker.qml.
       pcall(function()
-        os.execute("(sleep 4; foot -a gws-picker -T 'Global workspaces: relaunch' -e "
-                   .. plugin_bin("omarchy-gws-picker") .. ") >/dev/null 2>&1 &")
+        os.execute(plugin_bin("omarchy-gws-summon") .. " >/dev/null 2>&1 &")
       end)
     end)
     hl.on("window.open", function(w)
