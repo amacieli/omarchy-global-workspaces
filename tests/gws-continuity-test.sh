@@ -125,4 +125,14 @@ GWS_PLACE_LATE=0.2,0.4 "$GW" place 0xf
 grep -q "late check +0.4s: workspace 1, wanted 11 (DRIFT)" "$DIR/place.log" || fail "late check logs drift" "$(cat "$DIR/place.log")"
 pass "place logs a late check: wanted vs actual workspace"
 
+# j. a quiet timer look still leaves a line (proof the timer is alive); a quiet focus event does not
+rm -f "$DIR/snapshot.log"
+rec "{$(ent foot 1500 3)}"
+gws_clients "$(gws_client 0xa foot 11 false)"
+python3 "$ROOT/lib/gws.py" snapshot active
+[[ ! -e $DIR/snapshot.log ]] || fail "a quiet focus event logs nothing" "$(cat "$DIR/snapshot.log")"
+"$GW" reconcile
+grep -q '"trigger": "timer"' "$DIR/snapshot.log" || fail "a quiet timer look logs a heartbeat"
+pass "timer looks log a heartbeat; quiet event looks stay silent"
+
 echo "ALL PASS: gws-continuity"

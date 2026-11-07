@@ -508,7 +508,9 @@ def cmd_snapshot(trigger="event"):
 
     for ev, fields in events:
         slog(ev, trigger=trigger, **fields)
-    if events or os.environ.get("GWS_LOG_ALL") == "1":
+    # Event-driven looks (open/move/focus) log only when they decided something;
+    # the rare scheduled looks always log, so the log shows the timer is alive.
+    if events or trigger in ("login", "sweep", "timer") or os.environ.get("GWS_LOG_ALL") == "1":
         slog("snapshot", trigger=trigger, clients=len(clients), classes_open=len(current),
              records=sum(len(v) for v in entries.values()), changed=changed,
              shutting_down=sd, pending=pending, login=n_login)
