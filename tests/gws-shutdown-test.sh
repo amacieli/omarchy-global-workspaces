@@ -70,9 +70,49 @@ snap_all_gone
 pass "queued reboot.target job: layout survives"
 : > "$TMP/jobs"
 
-# f. backstop: no signal at all, but two apps vanish in one snapshot
+# f. no signal at all, two apps vanish in one snapshot. The mass-close veto is
+# gone: the records are marked absent, and survive until a later look, at least
+# GWS_CONFIRM seconds on, still finds them gone with no shutdown signal.
+export GWS_CONFIRM=45
 snap_all_gone
-[[ $(keys) == "foot vivaldi-stable" ]] || fail "mass close with no signal must keep the layout" "$(keys)"
-pass "mass close with no shutdown signal keeps the layout"
+[[ $(keys) == "foot vivaldi-stable" ]] || fail "first look only marks: records stay" "$(keys)"
+grep -q absent_since "$LAYOUT" || fail "first look marks the records absent"
+pass "mass close with no signal: first look marks, keeps the layout"
+
+# g. a session that dies right after a mass close never reaches the second look
+# (marks from an earlier login are void), so the next login still has the layout.
+echo 2000 > "$DIR/session-start"
+gws_clients
+"$GW" snapshot
+[[ $(keys) == "foot vivaldi-stable" ]] || fail "marks from an earlier login must not prune" "$(keys)"
+pass "absence marked in an earlier login is void"
+
+# h. confirmed later, no signal: dropped
+echo 1000 > "$DIR/session-start"
+snap_all_gone
+python3 - "$LAYOUT" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); 
+for ws in d["entries"].values():
+    for w in ws: w["absent_since"] -= 100
+json.dump(d, open(sys.argv[1], "w"))
+PY
+"$GW" snapshot
+[[ -z $(keys) ]] || fail "absent past the confirm time with no shutdown: dropped" "$(keys)"
+pass "absent past the confirm time, no shutdown: dropped"
+
+# i. same confirmed state but a shutdown is announced: nothing dropped
+snap_all_gone
+python3 - "$LAYOUT" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for ws in d["entries"].values():
+    for w in ws: w["absent_since"] = 1; w["absent_login"] = "1000"
+json.dump(d, open(sys.argv[1], "w"))
+PY
+echo '  run-r1.timer loaded active waiting [systemd-run] systemctl reboot --no-wall' > "$TMP/user-units"
+"$GW" snapshot
+[[ $(keys) == "foot vivaldi-stable" ]] || fail "confirmed absence is not acted on during shutdown" "$(keys)"
+pass "shutdown announced: confirmed absences are still not dropped"
 
 echo "ALL PASS: gws-shutdown"

@@ -59,11 +59,17 @@ sys.stdout.write(sys.stdin.read().replace("@PLUGIN_DIR@", os.environ["ROOT"]))
 ' <"$TEMPLATE" >"$tmp"
   mv -f -- "$tmp" "$FLAG_FILE"
   reload
+  # The persisted recorder's reconcile timer (a transient user unit; the login
+  # hook starts it too). Not started under the tests.
+  if [[ ${1:-} == persisted && ${GWS_NO_RELOAD:-} != 1 ]]; then
+    "$ROOT/bin/omarchy-gws-persist" timer-start || true
+  fi
 }
 
 turn_off() {
   rm -f -- "$FLAG_FILE" "$PERSIST_FLAG"
   reload
+  [[ ${GWS_NO_RELOAD:-} == 1 ]] || "$ROOT/bin/omarchy-gws-persist" timer-stop || true
 }
 
 case "${1:-}" in

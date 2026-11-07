@@ -2,7 +2,9 @@
 """Engine for Global Persisted mode. Driven by bin/omarchy-gws-persist.
 
 Who reads layout.json, and when:
-  * the recorder (snapshot) reads and writes it, while persisted mode is on;
+  * the recorder (snapshot) reads and writes it, while persisted mode is on. That
+    includes its reconcile looks: the close sweep, the 5-minute timer and the
+    login look all run `snapshot` with a trigger name;
   * the login picker (relaunch --list / --dry-run / --apply) reads it;
   * the explicit commands (show, forget, launchers, resolve) may read it.
 Nothing else does. place() never reads it: a window is placed only when the
@@ -39,11 +41,37 @@ MONITORS_LUA = os.environ.get("GWS_MONITORS_FILE") or os.path.join(HOME, ".confi
 STRIDE = 10
 GRACE = 180          # s after session-start in which a class is never truncated
 PENDING_TTL = 300    # s a picker launch stays eligible for placement
+SNAP_LOG = os.path.join(DIR, "snapshot.log")
+LOGIN_COUNT = os.path.join(DIR, "login-count")
+LOG_MAX = 200_000    # bytes before a log rotates to .old
 SIDE_EFFECT = re.compile(r"steam://|VBoxManage|virt-manager|win11")
 FIELD_CODE = re.compile(r"%[fFuUdDnNickvm]")
 URL_HOST = re.compile(r"https?://([^/\s\"'?#:]+)")
 PWA_VIVALDI = re.compile(r"^vivaldi-(.+?)__.*$")
 STEAM_CLASS = re.compile(r"^steam_app_(\d+)$")
+
+
+def confirm_secs():
+    """Seconds a window must stay gone, across two looks, before its record goes."""
+    try:
+        return float(os.environ.get("GWS_CONFIRM", "45"))
+    except ValueError:
+        return 45.0
+
+
+def max_carry():
+    """Logins a record may be offered without its app being open again."""
+    try:
+        return int(os.environ.get("GWS_MAX_CARRY", "1"))
+    except ValueError:
+        return 1
+
+
+def login_number():
+    try:
+        return max(1, int(read_text(LOGIN_COUNT) or 1))
+    except ValueError:
+        return 1
 
 
 def stagger():
@@ -284,22 +312,29 @@ def _systemctl(*args):
         return ""
 
 
-def shutting_down():
-    """True when the machine is going down or is about to. Windows close during
-    shutdown; the recorder must not read that as the user closing the apps.
+def shutdown_reason():
+    """Why the machine is considered to be going down, or None.
 
     Two signals, because the Omarchy menu's reboot (omarchy-system-reboot)
     queues the reboot behind a 2 s user timer and closes every window at once,
     so for the first seconds systemd has no reboot job yet:
-      1. a reboot/poweroff/halt/kexec job queued in the system manager;
-      2. a pending user-manager transient unit whose command is
-         `systemctl reboot|poweroff|halt|kexec`."""
+      1. a reboot/poweroff/halt/kexec job queued in the system manager ("job");
+      2. a pending user-manager transient unit whose command is a systemctl
+         reboot/poweroff/halt/kexec ("timer")."""
     if os.environ.get("GWS_SHUTDOWN") is not None:
-        return os.environ["GWS_SHUTDOWN"] == "1"
+        return "env" if os.environ["GWS_SHUTDOWN"] == "1" else None
     if SHUTDOWN_JOB.search(_systemctl("list-jobs", "--no-legend")):
-        return True
-    return SHUTDOWN_TIMER.search(_systemctl(
-        "--user", "list-units", "--all", "--no-legend", "--no-pager", "run-*")) is not None
+        return "job"
+    if SHUTDOWN_TIMER.search(_systemctl(
+            "--user", "list-units", "--all", "--no-legend", "--no-pager", "run-*")):
+        return "timer"
+    return None
+
+
+def shutting_down():
+    """True when the machine is going down or is about to. Windows close during
+    shutdown; the recorder must not read that as the user closing the apps."""
+    return shutdown_reason() is not None
 
 
 MONITOR_POS = re.compile(r'output\s*=\s*"([^"]+)"[^}]*?position\s*=\s*"(-?\d+)x(-?\d+)"')
@@ -320,99 +355,199 @@ def monitor_order():
 
 # ── recorder ─────────────────────────────────────────────────────────────────
 
-def cmd_snapshot():
+PENDING_EXIT = 10     # snapshot exit code: records are absent and awaiting confirmation
+
+
+def _place(w):
+    return "%s/%s" % (w.get("monitor"), w.get("slot"))
+
+
+def cmd_snapshot(trigger="event"):
+    """Record where the open windows are, and keep the record honest.
+
+    This is both the event recorder (window open/close/move/focus hooks) and
+    the periodic reconcile (timer, login, post-close sweep): same code, so every
+    path prunes by the same rules.
+
+    Continuity. A record is *live* when a window of its class is open now; it
+    carries `live_n`, the login number it was last live in. A record that is
+    not live now is handled by what it was:
+      * live this login (live_n == this login): the app was open and is gone.
+        It is marked `absent_since` the first time that is seen, and dropped by
+        a later look at least CONFIRM seconds on, if the machine is not shutting
+        down at that look. A reappearing window clears the mark. Nothing is
+        marked or dropped while shutting_down(); marks from an earlier login
+        are void (the session may have died, not the app).
+      * not live this login: it is a carry-over from an earlier login, offered
+        by the login checklist. It is kept for MAX_CARRY logins, then dropped.
+    Returns PENDING_EXIT when marked records still await confirmation."""
     if not persisted():
-        return
+        return 0
     clients, monitors = hypr_json("clients"), hypr_json("monitors")
     bases = load_json(BASES, None)
     if not isinstance(clients, list) or not isinstance(monitors, list) or not isinstance(bases, dict):
-        return
+        slog("skip", trigger=trigger, reason="hyprctl or monitor bases unavailable")
+        return 0
     owner = {int(b): n for n, b in bases.items()}
 
     entries = load_layout()
     ctx = load_ctx()
     stamp = read_text(SESSION)
     try:
-        in_grace = stamp is not None and time.time() - int(stamp) < GRACE
+        login = int(stamp) if stamp is not None else None
     except ValueError:
-        in_grace = False
+        login = None
+    in_grace = login is not None and time.time() - login < GRACE
     now = int(time.time())
+    n_login, carry, confirm = login_number(), max_carry(), confirm_secs()
+    sd = shutdown_reason()
+    events = []
 
-    current = {}
+    current, filtered = {}, {}
     for c in clients:
-        if not c.get("mapped", True) or c.get("hidden"):
-            continue
         cls, wsid = c.get("class") or "", c["workspace"]["id"]
-        if not cls or wsid <= 0:
+        why = None
+        if not c.get("mapped", True):
+            why = "unmapped"
+        elif c.get("hidden"):
+            why = "hidden"
+        elif cls and wsid <= 0:
+            why = "special-workspace %s" % wsid
+        elif cls and owner.get(((wsid - 1) // STRIDE) * STRIDE) is None:
+            why = "no-monitor-base"
+        if not cls:
             continue
-        name = owner.get(((wsid - 1) // STRIDE) * STRIDE)
-        if name is None:
+        if why:
+            filtered.setdefault(cls, set()).add(why)
             continue
         current.setdefault(cls, []).append({
-            "monitor": name,
+            "monitor": owner[((wsid - 1) // STRIDE) * STRIDE],
             "slot": (wsid - 1) % STRIDE + 1,
             "floating": bool(c.get("floating")),
             "at": c.get("at"),
             "size": c.get("size"),
             "seen": now,
+            "live_n": n_login,
         })
 
-    try:
-        login = int(stamp) if stamp is not None else None
-    except ValueError:
-        login = None
-    # Backstop for closes no shutdown signal announces (logout, a dying session,
-    # a close-all script): two or more classes of this login gone at once is a
-    # mass close, not the user quitting apps one by one. Keeping the records
-    # costs a stale row the user can untick; pruning on a false alarm costs the
-    # layout.
-    gone = [c for c, ws in entries.items()
-            if c not in current and login is not None
-            and any(w.get("seen", 0) >= login for w in ws)]
-    leaving = shutting_down() or len(gone) >= 2
-
+    pending = False
+    held = False
     learned = dict(ctx["learned"])
-    for cls in set(current) | set(entries):
+    for cls in sorted(set(current) | set(entries)):
         res = resolve_class(cls, ctx)
         if res["command"] is None:
-            entries.pop(cls, None)        # unresolved classes are not recorded
+            if entries.pop(cls, None) is not None:
+                events.append(("drop", {"class": cls, "reason": "unresolved launcher"}))
             continue
         if res.get("learn"):
             learned[cls] = {"id": res["id"]}
-        if cls in current:
-            wins, old = current[cls], entries.get(cls, [])
-            if in_grace and old:
-                # Just logged in: windows may still be on their way back, or may
-                # have landed wrong. Keep the recorded places; only add extras.
-                entries[cls] = old + wins[len(old):]
-            else:
-                entries[cls] = wins
-        elif login is not None and not leaving:
-            # Closed during this login (seen since login, gone now): the user
-            # closed it. Records from earlier logins that were never relaunched
-            # stay, and nothing is dropped while the machine is shutting down.
-            entries[cls] = [w for w in entries[cls] if w.get("seen", 0) < login]
-            if not entries[cls]:
-                del entries[cls]
-                continue
-        for w in entries[cls]:
-            w["launcher"] = res["command"]
 
+        old, wins = entries.get(cls, []), current.get(cls, [])
+        for w in old:                       # records from before live_n existed
+            if "live_n" not in w:
+                w["live_n"] = n_login if login is not None and w.get("seen", 0) >= login else n_login - 1
+        k = min(len(old), len(wins))
+        new = []
+        for i in range(k):                  # open windows: the record follows them
+            was, w = old[i], dict(wins[i])
+            if was.get("absent_since") is not None:
+                events.append(("returned", {"class": cls, "idx": i}))
+            if in_grace and was.get("live_n", 0) < n_login:
+                # Just logged in: the window may have landed wrong. Keep the
+                # recorded place; log the difference, it is what to look at.
+                if (was.get("monitor"), was.get("slot")) != (w["monitor"], w["slot"]):
+                    events.append(("grace-hold", {"class": cls, "idx": i,
+                                                  "recorded": _place(was), "actual": _place(w)}))
+                w.update({f: was[f] for f in ("monitor", "slot", "floating", "at", "size") if f in was})
+            elif (was.get("monitor"), was.get("slot")) != (w["monitor"], w["slot"]):
+                events.append(("moved", {"class": cls, "idx": i, "from": _place(was), "to": _place(w)}))
+            new.append(w)
+        for w in wins[k:]:                  # more windows than records
+            new.append(dict(w))
+            events.append(("added", {"class": cls, "place": _place(w)}))
+        for i, w in enumerate(old[k:], start=k):   # records with no open window
+            live_now = w.get("live_n", 0) >= n_login
+            if live_now:
+                if sd:
+                    held = True
+                    new.append(w)
+                    continue
+                if w.get("absent_since") is None or w.get("absent_login") != stamp:
+                    w["absent_since"], w["absent_login"] = now, stamp
+                    events.append(("absent", {"class": cls, "idx": i, "place": _place(w),
+                                              "still-mapped-as": sorted(filtered.get(cls, []))}))
+                gone = now - w["absent_since"]
+                if gone >= confirm:
+                    events.append(("prune", {"class": cls, "idx": i, "reason": "closed",
+                                             "absent_for": gone}))
+                    continue
+                pending = True
+                new.append(w)
+            else:
+                w.pop("absent_since", None)
+                w.pop("absent_login", None)
+                dormant = n_login - w.get("live_n", n_login)
+                if dormant > carry:
+                    events.append(("prune", {"class": cls, "idx": i, "reason": "carried",
+                                             "logins_offered": dormant - 1,
+                                             "last_seen": w.get("seen")}))
+                    continue
+                new.append(w)
+        if not new:
+            entries.pop(cls, None)
+            continue
+        for w in new:
+            w["launcher"] = res["command"]
+        entries[cls] = new
+
+    if held:
+        events.append(("hold", {"reason": "shutting down (%s): no record marked or dropped" % sd}))
     if learned != ctx["learned"]:
         atomic_json(LEARNED, learned)
-    save_layout(entries)
+    changed = save_layout(entries)
+
+    for ev, fields in events:
+        slog(ev, trigger=trigger, **fields)
+    if events or os.environ.get("GWS_LOG_ALL") == "1":
+        slog("snapshot", trigger=trigger, clients=len(clients), classes_open=len(current),
+             records=sum(len(v) for v in entries.values()), changed=changed,
+             shutting_down=sd, pending=pending, login=n_login)
+    return PENDING_EXIT if pending else 0
 
 
 # ── placement: only for windows the login picker started ────────────────────
 
-def log_place(msg):
+def append_log(path, line):
     try:
-        if os.path.exists(PLACE_LOG) and os.path.getsize(PLACE_LOG) > 100_000:
-            os.rename(PLACE_LOG, PLACE_LOG + ".old")
-        with open(PLACE_LOG, "a") as f:
-            f.write("%s %s\n" % (time.strftime("%F %T"), msg))
+        if os.path.exists(path) and os.path.getsize(path) > LOG_MAX:
+            os.replace(path, path + ".old")
+        with open(path, "a") as f:
+            f.write(line + "\n")
     except OSError:
         pass
+
+
+def log_place(msg):
+    append_log(PLACE_LOG, "%s %s" % (time.strftime("%F %T"), msg))
+
+
+def slog(ev, **fields):
+    """One JSON line in snapshot.log: what the recorder decided and why. Kept on
+    purpose, for debugging; `omarchy-gws-persist log` reads it."""
+    rec = {"t": time.strftime("%F %T"), "ev": ev}
+    rec.update(fields)
+    append_log(SNAP_LOG, json.dumps(rec, sort_keys=True))
+
+
+def late_checks():
+    raw = os.environ.get("GWS_PLACE_LATE", "5,15")
+    out = []
+    for part in raw.split(","):
+        try:
+            out.append(float(part))
+        except ValueError:
+            pass
+    return sorted(t for t in out if t > 0)
 
 
 def cmd_place(addr):
@@ -471,6 +606,20 @@ def cmd_place(addr):
                  % (want["size"][0], want["size"][1], sel))
         dispatch('hl.dsp.window.move({ x = %d, y = %d, exact = true, %s })'
                  % (want["at"][0], want["at"][1], sel))
+    # Observation only (no re-placing): where did the window end up once the app
+    # had time to move itself? This is what tells a late self-relocation from a
+    # failed placement.
+    waited = 0.0
+    for t in late_checks():
+        time.sleep(max(0.0, t - waited))
+        waited = t
+        now = next((c for c in (hypr_json("clients") or []) if c.get("address") == addr), None)
+        if not now:
+            log_place("%s %s: late check +%gs: window gone" % (addr, me["class"], t))
+            break
+        ws = now["workspace"]["id"]
+        log_place("%s %s: late check +%gs: workspace %s, wanted %d (%s)"
+                  % (addr, me["class"], t, ws, target, "ok" if ws == target else "DRIFT"))
 
 
 # ── login picker: rows, dry run, apply ──────────────────────────────────────
@@ -696,14 +845,37 @@ def cmd_picker_json():
     } for r in picker_rows()]}))
 
 
+def cmd_log(args):
+    """Print the tail of snapshot.log (or place.log with --place), one event a line."""
+    path = PLACE_LOG if "--place" in args else SNAP_LOG
+    nums = [a for a in args if a.isdigit()]
+    n = int(nums[0]) if nums else 40
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()[-n:]
+    except OSError:
+        print("no log yet: %s" % path)
+        return
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            print(line)
+            continue
+        t, ev = r.pop("t", ""), r.pop("ev", "")
+        print("%s %-10s %s" % (t, ev, " ".join("%s=%s" % (k, r[k]) for k in sorted(r))))
+
+
 def main(argv):
     cmd, args = (argv[0] if argv else ""), argv[1:]
     if cmd == "snapshot":
-        cmd_snapshot()
+        return cmd_snapshot(args[0] if args else "event")
     elif cmd == "place":
         cmd_place(args[0] if args else "")
     elif cmd == "session-start":
         atomic_write(SESSION, str(int(time.time())) + "\n")
+        atomic_write(LOGIN_COUNT, str(login_number() + 1) + "\n")
+        slog("login", n=login_number())
     elif cmd == "show":
         print(json.dumps(load_json(LAYOUT, {}) or {}, indent=2, sort_keys=True))
     elif cmd == "forget":
@@ -716,10 +888,12 @@ def main(argv):
         return cmd_relaunch(args)
     elif cmd == "current":
         cmd_current()
+    elif cmd == "log":
+        cmd_log(args)
     elif cmd == "picker-json":
         cmd_picker_json()
     else:
-        print("usage: gws.py snapshot|place ADDR|session-start|show|forget [CLASS]|launchers [--unresolved]|resolve CLASS|relaunch ...", file=sys.stderr)
+        print("usage: gws.py snapshot [TRIGGER]|log [N] [--place]|place ADDR|session-start|show|forget [CLASS]|launchers [--unresolved]|resolve CLASS|relaunch ...", file=sys.stderr)
         return 1
     return 0
 

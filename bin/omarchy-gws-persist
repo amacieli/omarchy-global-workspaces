@@ -2,7 +2,10 @@
 # omarchy-gws-persist — "Global Persisted" mode: record, place and relaunch apps.
 #
 # Usage:
-#   omarchy-gws-persist snapshot                    record open windows (debounced 2 s)
+#   omarchy-gws-persist snapshot [TRIGGER]          record open windows (debounced 2 s)
+#   omarchy-gws-persist reconcile                   look now, no debounce (what the timer runs)
+#   omarchy-gws-persist timer-start | timer-stop    the 5-minute reconcile timer (transient user unit)
+#   omarchy-gws-persist log [N] [--place]           tail of snapshot.log (recorder decisions) or place.log
 #   omarchy-gws-persist place ADDRESS               place a window the login picker started
 #   omarchy-gws-persist session-start               mark the start of a login
 #   omarchy-gws-persist show                        print layout.json
@@ -21,10 +24,25 @@ DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/global-workspaces"
 PERSIST_FLAG="$DIR/persisted"
 
 engine() { exec python3 "$ROOT/lib/gws.py" "$@"; }
+gws() { python3 "$ROOT/lib/gws.py" "$@"; }
+
+TIMER_UNIT=gws-reconcile
+timer_start() {
+  command -v systemd-run >/dev/null || return 0
+  systemctl --user is-active --quiet "$TIMER_UNIT.timer" && return 0
+  systemd-run --user --quiet --collect --unit="$TIMER_UNIT" \
+    --description="gws reconcile" \
+    --on-active="${GWS_TIMER_FIRST:-120}" --on-unit-active="${GWS_TIMER_EVERY:-300}" \
+    "$ROOT/bin/omarchy-gws-persist" reconcile >/dev/null 2>&1 || true
+}
+timer_stop() {
+  systemctl --user stop "$TIMER_UNIT.timer" "$TIMER_UNIT.service" >/dev/null 2>&1 || true
+}
 
 case "${1:-}" in
   snapshot)
     [[ -f $PERSIST_FLAG ]] || exit 0
+    trigger=${2:-event}
     # Debounce: the first caller sleeps and then records the latest state;
     # callers arriving meanwhile exit at once.
     mkdir -p "$DIR"
@@ -32,14 +50,43 @@ case "${1:-}" in
     flock -n 9 || exit 0
     sleep "${GWS_DEBOUNCE:-2}"
     exec 9>&-
-    engine snapshot
+    gws snapshot "$trigger"; rc=$?
+    # A close marks the record absent; it is dropped by a later look, at least
+    # GWS_CONFIRM seconds on and not during shutdown. Make that look happen
+    # instead of waiting for the timer. One sweeper at a time.
+    if [[ $trigger == close && $rc == 10 ]]; then
+      exec 8>"$DIR/sweep.lock"
+      flock -n 8 || exit 0
+      for _ in 1 2 3 4; do
+        sleep "${GWS_SWEEP_DELAY:-$(( ${GWS_CONFIRM:-45} + 2 ))}"
+        gws snapshot sweep; rc=$?
+        [[ $rc == 10 ]] || break
+      done
+    fi
+    exit 0
+    ;;
+  reconcile)
+    [[ -f $PERSIST_FLAG ]] || exit 0
+    gws snapshot timer; exit 0
+    ;;
+  timer-start) [[ -f $PERSIST_FLAG ]] && timer_start; exit 0 ;;
+  timer-stop) timer_stop; exit 0 ;;
+  session-start)
+    # A new login: stamp it, count it, start the reconcile timer, and look once
+    # now so carried-over records past their limit are gone before the checklist.
+    gws session-start
+    if [[ -f $PERSIST_FLAG ]]; then
+      timer_start
+      gws snapshot login
+    fi
+    exit 0
     ;;
   place)
     [[ -n ${2:-} && -f $PERSIST_FLAG ]] || exit 0
     sleep "${GWS_PLACE_DELAY:-0.2}"
     engine place "$2"
     ;;
-  session-start|show|forget|launchers|resolve|relaunch)
+  show|forget|launchers|resolve|relaunch|log)
     engine "$@"
     ;;
   *)

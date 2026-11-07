@@ -381,13 +381,13 @@ do
     hl.on("window.open", function(w)
       local ok, addr = pcall(function() return w.address end)
       if ok and addr then run("place " .. addr) end
-      run("snapshot")
+      run("snapshot open")
     end)
-    -- A closed app leaves the record at the next snapshot (the recorder skips this
-    -- while the machine is shutting down).
-    pcall(function() hl.on("window.close", function() run("snapshot") end) end)
-    hl.on("window.move_to_workspace", function() run("snapshot") end)
-    hl.on("workspace.move_to_monitor", function() run("snapshot") end)
-    hl.on("window.active", function() run("snapshot") end)  -- catches floating moves/resizes
+    -- A closed app is marked gone at the next snapshot and dropped by a later look
+    -- (the close sweep, or the 5-minute reconcile timer), never during shutdown.
+    pcall(function() hl.on("window.close", function() run("snapshot close") end) end)
+    hl.on("window.move_to_workspace", function() run("snapshot move") end)
+    hl.on("workspace.move_to_monitor", function() run("snapshot monitor") end)
+    hl.on("window.active", function() run("snapshot active") end)  -- catches floating moves/resizes
   end
 end
